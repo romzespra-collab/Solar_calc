@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""solar_calc.pyw  v1.2.0
+"""solar_calc.pyw  v1.2.1
 Калькулятор выработки солнечной станции:
 солнце → угол/азимут → панели → схема Ns×Np → провод и контакты → окно MPPT → КПД MPPT →
 ток заряда → АКБ → инвертор. Данные солнца: встроенные (≈Киев) или PVGIS для любой точки.
 
 Журнал:
+v1.2.1: исправления по полной проверке — пустые числовые поля на PySide6 6.12 (QSS + NoButtons);
+        верх окна MPPT (Vmpp макс.) теперь режет мощность; «вернуться на АКБ» ≤ мин. заряда больше
+        не дёргает сеть/АКБ каждые 10 минут; проверка и подрезка значений из config.json и профилей
+        (битый config → config.json.bak), атомарная запись config; ошибки записи файлов (CSV, PNG,
+        лог, профиль) — в лог и окном; необработанные ошибки — в лог; копирование данных графика угла
+        в градусах; ровные подписи оси Y; пустой ответ PVGIS — ошибка, а не нули.
 v1.2.0: отдельные страницы — Настройки, Прогноз, Покрытие дома, Горсеть; моделирование заряда АКБ
         по 10 минутам (во сколько переход на сеть и обратно, кВт·ч из сети, стоимость), профиль
         потребления по часам, серия дней подряд, тариф, режим «есть сеть / нет сети».
@@ -15,7 +21,7 @@ v1.0.0: первая версия — модель солнца (встроен�
         окно MPPT, лимит тока заряда, потери по этапам, сравнение схем, подбор угла и сечения.
 """
 APP_NAME = "Солнечный калькулятор"
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 import sys
 import os
@@ -106,6 +112,7 @@ import logging.handlers
 import time
 import base64
 import csv
+import traceback
 import urllib.request
 import urllib.error
 
@@ -249,25 +256,86 @@ DEFAULT_CONFIG = {"theme": "dark", "geometry": "", "sys": dict(DEFAULT_SYS),
                   "last_dir": ""}
 
 
+def clean_sys(d):
+    """Параметры станции из config.json / профиля → типы и пределы как у полей ввода; негодное — по умолчанию."""
+    out = dict(DEFAULT_SYS)
+    if not isinstance(d, dict):
+        return out
+    spec = {k: (kind, opt) for _, fields in INPUT_CARDS for k, _, kind, opt, _ in fields}
+    spec.update(month=("num", (0, 11)), ser_days=("num", (1, 10)), ser_soc0=("num", (0, 100)),
+                pt_g=("num", (0, 1300)), pt_t=("num", (-40, 50)), weather=("seg", WEATHER), ser_weather=("seg", WEATHER))
+    for k, v in d.items():
+        if k not in out:
+            continue
+        kind, opt = spec.get(k, (None, None))
+        try:
+            if kind in ("num", "wire"):
+                lo, hi = (opt if kind == "num" else WIRE_RANGE["s"])[:2]
+                v = float(v)
+                if not math.isfinite(v):
+                    continue
+                v = min(max(v, lo), hi)
+                if k in INT_KEYS:
+                    v = int(round(v))
+            elif kind == "toggle":
+                v = bool(v)
+            elif kind in ("seg", "combo"):
+                v = str(v)
+                if v not in (opt if isinstance(opt, dict) else dict(opt)):
+                    continue
+        except (TypeError, ValueError):
+            continue
+        out[k] = v
+    return out
+
+
+def _pv_ok(pv):
+    try:
+        float(pv["lat"]), float(pv["lon"])
+        return len(pv["months"]) == 12 and all(
+            len(d[k]) == 24 for d in pv["months"] for k in ("ghi", "dhi", "gcs", "t")) and \
+            all(isinstance(d["H"], (int, float)) and isinstance(d["T"], (int, float)) for d in pv["months"])
+    except Exception:
+        return False
+
+
 def load_config():
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+    if not CONFIG_PATH.exists():
+        return cfg
     try:
-        if CONFIG_PATH.exists():
-            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-            sysd = dict(DEFAULT_SYS)
-            sysd.update(data.get("sys") or {})
-            cfg.update(data)
-            cfg["sys"] = sysd
-            if not isinstance(cfg.get("builtin"), list) or len(cfg["builtin"]) != 12:
-                cfg["builtin"] = [list(x) for x in BUILTIN_SUN]
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("ожидался объект JSON")
     except Exception as e:
-        print("config:", e)
+        bak = CONFIG_PATH.with_name("config.json.bak")
+        try:
+            CONFIG_PATH.replace(bak)
+        except OSError:
+            pass
+        log.warning(f"⚠ config.json испорчен ({e}) — сохранён как {bak.name}, настройки по умолчанию")
+        return cfg
+    cfg.update(data)
+    cfg["sys"] = clean_sys(data.get("sys"))
+    try:
+        cfg["builtin"] = [[float(r[0]), float(r[1])] for r in cfg["builtin"]]
+        if len(cfg["builtin"]) != 12:
+            raise ValueError
+    except Exception:
+        cfg["builtin"] = [list(x) for x in BUILTIN_SUN]
+    if cfg.get("pvgis") is not None and not _pv_ok(cfg["pvgis"]):
+        log.warning("⚠ Данные PVGIS в config.json повреждены — сброшены, загрузите заново")
+        cfg["pvgis"] = None
+    cfg["use_pvgis"] = bool(cfg.get("use_pvgis", True))
+    cfg["last_dir"] = str(cfg.get("last_dir") or "")
     return cfg
 
 
 def save_config(cfg):
     try:
-        CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp = CONFIG_PATH.with_name("config.json.tmp")
+        tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, CONFIG_PATH)
     except Exception as e:
         log.error(f"✗ Не удалось сохранить config.json: {e}")
 
@@ -528,15 +596,21 @@ def sim_point(c, poa, ta):
     mm = Va * Ia
     dV = max(0.5, Vo - Va)
     vreq = c["vin_min"]
+    vtop = c["vmpp_max"]
+    # Vmp выше окна MPPT: контроллер держит верх окна, рабочая точка левее MPP (ток ≈ Imp)
+    top = vtop > 0 and Va - Ia * R > vtop
     I = Ia
-    if Va - Ia * R < vreq:
+    if top:
+        if vtop < vreq:
+            I = 0.0
+    elif Va - Ia * R < vreq:
         I = Ia * (Vo - vreq) / (dV + Ia * R)
     if c["iin_max"] > 0 and I > c["iin_max"]:
         I = c["iin_max"]
     if I <= 0 or Ia <= 0:
         return (pot, soil, cell, mm, 0, 0, 0, 0, 0, 0, 0, Vo, tc, R)
     I = min(I, Ia)
-    Vp = Va + (Ia - I) / Ia * dV
+    Vp = vtop + I * R if top else Va + (Ia - I) / Ia * dV
     arr = Vp * I
     vin = Vp - I * R
     pin = arr - I * I * R
@@ -664,7 +738,8 @@ def soc_run(c, curve, load_wh, prof, e, on_grid):
     usable = c["usable_wh"]
     cap = max(1.0, c["bank_wh"])
     base = cap - usable
-    e_back = max(0.0, min(usable, c["back_soc"] * cap - base))
+    # гистерезис ≥ 5% полезной ёмкости: иначе при «вернуться на АКБ» ≤ мин. заряда сеть/АКБ дёргаются каждый шаг
+    e_back = max(0.05 * usable, min(usable, c["back_soc"] * cap - base))
     eta_b = c["eta_bat"]
     eta_i = max(0.5, c["inv_eta"])
     vb = max(1.0, c["sys_nom"])
@@ -921,6 +996,8 @@ def parse_pvgis(data, lat, lon, builtin):
         d["dhi"][h] = gd if gd is not None else (max(0.0, g - gb) if gb is not None else g * 0.5)
         d["gcs"][h] = _num(r, "Gcs(i)", "Gcs") or 0.0
         d["t"][h] = _num(r, "T2m")
+    if not any(sum(d["ghi"]) > 0 for d in months):
+        raise RuntimeError("в ответе PVGIS нет данных облучённости")
     for m, d in enumerate(months):
         if all(v is None for v in d["t"]):
             d["t"] = [builtin[m][1]] * 24
@@ -1011,6 +1088,7 @@ QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox, QPlainTextEdit {{
     background: {p['panel2']}; border: 1px solid {p['line']}; border-radius: 7px; padding: 4px 6px;
     selection-background-color: {p['accent']}; selection-color: #ffffff; }}
 QLineEdit:focus, QDoubleSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus {{ border-color: {p['accent']}; }}
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0px; border: none; }}
 QComboBox::drop-down {{ border: none; width: 22px; }}
 QComboBox QAbstractItemView {{ background: {p['panel']}; border: 1px solid {p['line']}; selection-background-color: {p['accent']}; selection-color: #fff; outline: 0; }}
 QPushButton {{ background: {p['panel2']}; border: 1px solid {p['line']}; border-radius: 7px; padding: 6px 12px; }}
@@ -1144,7 +1222,7 @@ class Stepper(QWidget):
         self.sp.setDecimals(dec)
         if suffix:
             self.sp.setSuffix(" " + suffix)
-        self.sp.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        # не NoButtons: в Qt 6.12 с QSS поле ввода тогда сжимается до 1 px; свои кнопки скрыты в QSS
         self.sp.setFocusPolicy(Qt.StrongFocus)
         self.sp.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.sp.setKeyboardTracking(False)
@@ -1214,6 +1292,12 @@ def _btn(text, name=None, tip=None, slot=None):
 
 def _menu_style(menu):
     return menu
+
+
+def _save_failed(parent, fn, e):
+    log.error(f"✗ Не удалось сохранить {fn}: {e}")
+    QMessageBox.warning(parent, APP_NAME, f"Не удалось сохранить файл:\n{fn}\n\n{e}\n\n"
+                                          "Возможно, он открыт в другой программе (Excel) или нет прав на запись.")
 
 
 def _nice(v):
@@ -1302,6 +1386,8 @@ class Chart(QWidget):
             pa.drawText(QPointF(x + 14, 19), name)
             x += 14 + fm.horizontalAdvance(name) + 16
         ymax = self._ymax()
+        ystep = ymax / 5
+        ydig = 0 if abs(ystep - round(ystep)) < 1e-6 else 1 if abs(ystep * 10 - round(ystep * 10)) < 1e-6 else 2
         # сетка
         for i in range(6):
             yv = ymax * i / 5
@@ -1309,7 +1395,7 @@ class Chart(QWidget):
             pa.setPen(QPen(line, 1, Qt.SolidLine if i == 0 else Qt.DotLine))
             pa.drawLine(QPointF(r.left(), yy), QPointF(r.right(), yy))
             pa.setPen(muted)
-            lab = _fmt(yv, 1 if ymax < 5 else 0)
+            lab = _fmt(yv, ydig)
             pa.drawText(QRectF(0, yy - 8, r.left() - 6, 16), Qt.AlignRight | Qt.AlignVCenter, lab)
         pa.setPen(muted)
         pa.drawText(QRectF(0, r.top() - 28, r.left() - 6, 14), Qt.AlignRight | Qt.AlignVCenter, self.unit)
@@ -1436,11 +1522,12 @@ class Chart(QWidget):
         names = [n for n, _, _ in self.series]
         rows = []
         if self.kind == "line":
-            rows.append("\t".join(["Время"] + names))
+            deg, multi = self.xfmt == "deg", self.xmax > 25
+            rows.append("\t".join(["Угол" if deg else "Время"] + names))
             for i, xv in enumerate(self.xs):
                 if self.xmin <= xv <= self.xmax:
-                    rows.append("\t".join([f"{int(xv):02d}:{int(round((xv % 1) * 60)) % 60:02d}"] +
-                                          [f"{s[i]:.1f}".replace(".", ",") for _, _, s in self.series]))
+                    x = f"{xv:g}°" if deg else (f"день {int(xv // 24) + 1} " if multi else "") + fmt_t(xv)
+                    rows.append("\t".join([x] + [f"{s[i]:.1f}".replace(".", ",") for _, _, s in self.series]))
         else:
             rows.append("\t".join([""] + names))
             for i, l in enumerate(self.labels):
@@ -1458,9 +1545,12 @@ class Chart(QWidget):
     def _save_png(self):
         fn, _ = QFileDialog.getSaveFileName(self, "Сохранить график", str(APP_ROOT / "график.png"),
                                             "PNG (*.png)", options=QFileDialog.DontUseNativeDialog)
-        if fn:
-            self.grab().save(fn)
+        if not fn:
+            return
+        if self.grab().save(fn, "PNG"):
             log.info(f"✓ График сохранён: {fn}")
+        else:
+            _save_failed(self, fn, "ошибка записи PNG")
 
 
 def make_table(headers, extra_actions=None):
@@ -1508,11 +1598,15 @@ def export_table_csv(t):
                                         options=QFileDialog.DontUseNativeDialog)
     if not fn:
         return
-    with open(fn, "w", newline="", encoding="utf-8-sig") as f:
-        w = csv.writer(f, delimiter=";")
-        w.writerow([t.horizontalHeaderItem(c).text() for c in range(t.columnCount())])
-        for r in range(t.rowCount()):
-            w.writerow([(t.item(r, c).text() if t.item(r, c) else "") for c in range(t.columnCount())])
+    try:
+        with open(fn, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.writer(f, delimiter=";")
+            w.writerow([t.horizontalHeaderItem(c).text() for c in range(t.columnCount())])
+            for r in range(t.rowCount()):
+                w.writerow([(t.item(r, c).text() if t.item(r, c) else "") for c in range(t.columnCount())])
+    except OSError as e:
+        _save_failed(t, fn, e)
+        return
     log.info(f"✓ CSV сохранён: {fn}")
 
 
@@ -3006,12 +3100,12 @@ class App(QMainWindow):
             val = float(it.text().replace(",", ".").strip())
         except ValueError:
             log.warning(f"⚠ Не число: «{it.text()}»")
-            self._fill_data_table()
+            QTimer.singleShot(0, self._fill_data_table)
             return
         self.cfg["builtin"][r][c - 1] = val
         save_config(self.cfg)
         log.info(f"✓ {MONTHS[r]}: встроенное значение изменено на {val}")
-        self.recalc()
+        QTimer.singleShot(0, self.recalc)   # recalc перестраивает таблицу — не внутри itemChanged
 
     def reset_builtin(self):
         if QMessageBox.question(self, APP_NAME, "Вернуть встроенные значения (≈Киев)?") != QMessageBox.Yes:
@@ -3131,8 +3225,13 @@ class App(QMainWindow):
     def _save_log(self):
         fn, _ = QFileDialog.getSaveFileName(self, "Сохранить лог", str(APP_ROOT / "лог.txt"), "Текст (*.txt)",
                                             options=QFileDialog.DontUseNativeDialog)
-        if fn:
+        if not fn:
+            return
+        try:
             Path(fn).write_text(self.log_view.toPlainText(), encoding="utf-8")
+            log.info(f"✓ Лог сохранён: {fn}")
+        except OSError as e:
+            _save_failed(self, fn, e)
 
     def _append_log(self, level, text):
         lv = self.log_view
@@ -3235,7 +3334,11 @@ class App(QMainWindow):
                                             "Профиль (*.json)", options=QFileDialog.DontUseNativeDialog)
         if not fn:
             return
-        Path(fn).write_text(json.dumps({"solar_calc": VERSION, "sys": self.s}, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            Path(fn).write_text(json.dumps({"solar_calc": VERSION, "sys": self.s}, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as e:
+            _save_failed(self, fn, e)
+            return
         self.cfg["last_dir"] = str(Path(fn).parent)
         log.info(f"✓ Профиль сохранён: {fn}")
 
@@ -3246,9 +3349,10 @@ class App(QMainWindow):
             return
         try:
             data = json.loads(Path(fn).read_text(encoding="utf-8"))
-            sysd = data.get("sys", data)
-            new = dict(DEFAULT_SYS)
-            new.update({k: v for k, v in sysd.items() if k in DEFAULT_SYS})
+            sysd = data.get("sys", data) if isinstance(data, dict) else None
+            if not isinstance(sysd, dict) or not set(sysd) & set(DEFAULT_SYS):
+                raise ValueError("в файле нет параметров станции")
+            new = clean_sys(sysd)
             self.s.clear()
             self.s.update(new)
             self.cfg["last_dir"] = str(Path(fn).parent)
@@ -3306,12 +3410,16 @@ class App(QMainWindow):
         if not fn:
             return
         res = self.R["res"]
-        with open(fn, "w", newline="", encoding="utf-8-sig") as f:
-            w = csv.writer(f, delimiter=";")
-            w.writerow(["Месяц", "Ясно, Вт·ч/сут", "Средне, Вт·ч/сут", "Пасмурно, Вт·ч/сут", "Средне за месяц, кВт·ч"])
-            for m in range(12):
-                w.writerow([MONTHS[m]] + [f"{res[(m, k)]['wh'][8]:.0f}" for k in W_KEYS] +
-                           [f"{res[(m, 'avg')]['wh'][8] * DAYS[m] / 1000:.1f}".replace(".", ",")])
+        try:
+            with open(fn, "w", newline="", encoding="utf-8-sig") as f:
+                w = csv.writer(f, delimiter=";")
+                w.writerow(["Месяц", "Ясно, Вт·ч/сут", "Средне, Вт·ч/сут", "Пасмурно, Вт·ч/сут", "Средне за месяц, кВт·ч"])
+                for m in range(12):
+                    w.writerow([MONTHS[m]] + [f"{res[(m, k)]['wh'][8]:.0f}" for k in W_KEYS] +
+                               [f"{res[(m, 'avg')]['wh'][8] * DAYS[m] / 1000:.1f}".replace(".", ",")])
+        except OSError as e:
+            _save_failed(self, fn, e)
+            return
         log.info(f"✓ CSV сохранён: {fn}")
 
     def _save_all(self):
@@ -3326,6 +3434,16 @@ class App(QMainWindow):
 
 
 # ═════════════════════════════════ запуск ═════════════════════════════════
+def _excepthook(tp, val, tb):
+    """Необработанная ошибка (в т.ч. в слотах Qt): под pythonw консоли нет — пишем в лог."""
+    log.error(f"✗ Ошибка программы: {tp.__name__}: {val}")
+    try:
+        _fh.emit(logging.makeLogRecord({"msg": "".join(traceback.format_exception(tp, val, tb)).rstrip(),
+                                        "levelno": logging.ERROR, "levelname": "ERROR"}))
+    except Exception:
+        pass
+
+
 def selftest():
     lines, ok = [], True
     try:
@@ -3354,6 +3472,7 @@ def selftest():
 def main():
     if "--selftest" in sys.argv:
         sys.exit(selftest())
+    sys.excepthook = _excepthook
     if os.name == "nt":
         try:
             import ctypes

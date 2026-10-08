@@ -6,3 +6,4 @@ build/
 dist/
 release/
 data/
+config.json.*
