@@ -58,7 +58,7 @@ Engineering simulators (PVsyst, SAM, HOMER, PV*SOL, PVGIS) all run at least hour
 - HOMER Grid: library of 50,000+ US tariffs, demand-charge limiting, TOU arbitrage, resilience module (extra simulation of a user-specified outage window, outage cost folded into COE/NPC), no stochastic reliability analysis — [HOMER Grid](https://homerenergy.com/homer-grid); [How HOMER Grid models resilience](https://homerenergy.com/products/grid/docs/latest/how_homer_grid_models_resilience.html); [Demand response](https://homerenergy.com/products/grid/docs/latest/demand_response.html)
 
 #### PV*SOL / PV*SOL premium (Valentin, commercial; 2026 edition released Nov 2025)
-- Component DB counts (vary by source): "over 26,000 PV modules, 7,500 inverters, 5,500 battery systems" (2025 listing); other sources cite 12,500+ or 16,000 batteries — [PV*SOL premium page / listings via search](https://valentin-software.com/en/products/pvsol-premium/); [review](https://www.heavengreenenergy.com/blog/pvsol-review)
+- Component DB counts conflict across sources: a 2025-era listing surfaced by search says "over 26,000 PV modules, 7,500 inverters, 5,500 battery systems" (exact listing not identified); a download site cites 12,500+ batteries for 2026 and a review cites 16,000 — treat as order-of-magnitude only — [PV*SOL premium page](https://valentin-software.com/en/products/pvsol-premium/); [Filehippo listing](https://filehippo.com/download_pvsol-premium-2025/); [review](https://www.heavengreenenergy.com/blog/pvsol-review)
 - 3D design up to 7,500 mounted / 10,000 roof-parallel modules; shading simulation and shadow frequency; PVGIS climate data updated to SARAH3 (2025) — [PV*SOL premium 2025 news](https://valentin-software.com/en/product-news-blog-en/pvsol-premium-2025-available-now/)
 - Off-grid: energy order PV -> load, battery down to min SOC, then generator; surplus PV charges to max SOC; generator controlled by SOC; load shedding by SOC thresholds in two time windows — [PV*SOL off-grid calculation](https://help.valentin-software.com/pvsol/en/calculation/offgrid-systems/); [Backup generator](https://help.valentin-software.com/pvsol/en/pages/backup-generator/)
 - Off-grid battery sizing from an autonomy time and a design period (radiation basis), assumes max discharge to 20% of capacity, ~2 kWh battery per kW battery-inverter in cluster defaults — [PV*SOL system configuration](https://help.valentin-software.com/pvsol/en/pages/battery-inverter-and-battery/system-configuration/)
@@ -265,66 +265,66 @@ Abbreviations: PVS = PVsyst; PVG = PVGIS; SAM; HOM = HOMER Pro/Grid; SOL = PV*SO
 
 | # | Feature | PVS | PVG | SAM | HOM | SOL | VIC | SMA | FRO | HUA | SE | OS | AUR | CON | UA | OUR |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **Weather / time base** |
-| 1 | Hourly full-year or multi-year series / TMY | Y | Y | Y | Y | Y | - | ? | ? | ? | P | P (SAM engine) | Y | - | P (cec.in.ua via PVGIS) | - |
+| **Weather / time base** | | | | | | | | | | | | | | | | |
+| 1 | Hourly full-year or multi-year series / TMY | Y | Y | Y | Y | P (PVGIS SARAH3 climate data) | - | ? | ? | ? | P | P (SAM option) | Y | - | P (cec.in.ua via PVGIS) | - |
 | 2 | Sub-hourly step | ? | - | Y | Y | ? | - | ? | ? | ? | ? | ? | ? | - | - | P (10-min avg day) |
-| 3 | Clear/average/overcast scenario days | - | - | - | - | - | - | - | - | - | - | - | - | - | - | Y |
-| 4 | Worst n-day / multi-day weather sequence | Y (presizing) | Y (series) | Y | Y | P | - | - | - | - | - | - | - | - | - | P (N-day series) |
-| **PV losses / models** |
-| 5 | 3D near shading / scene | Y | - | Y | - | Y | - | ? | Y | Y | Y | ? | Y | - | - | - |
-| 6 | Horizon profile (multi-point / DEM) | Y | Y | ? | - | ? | - | ? | ? | ? | ? | ? | ? | - | P (PVGIS) | P (one angle) |
-| 7 | Module temperature model | Y | Y | Y | Y | Y | P (Voc only) | Y | ? | ? | ? | ? | ? | - | - | Y |
-| 8 | Inverter/MPPT efficiency curve (power and voltage) | Y | - | Y | - | Y | - | P | ? | ? | P | ? | ? | - | - | P (MPPT vs Vin/Vbat; inverter constant) |
-| 9 | Clipping / DC:AC ratio modelling | Y | - | Y | - | Y | Y (PV power ratio) | Y | ? | Y | Y | ? | ? | - | - | P (MPPT current/charge limit) |
-| 10 | Mismatch, soiling, module quality | Y | P (single loss %) | Y | - | Y | - | ? | ? | ? | ? | ? | ? | - | - | Y |
-| 11 | PV degradation over years | Y | - | Y | Y | Y | - | ? | ? | ? | ? | ? | Y | - | P (Atmosfera mentions) | - |
-| 12 | Snow loss | ? | P (in loss %) | Y | - | ? | - | - | - | - | - | - | - | - | - | - |
-| **Battery** |
-| 13 | SOC, efficiency, DoD/cut-off, C-rate limits | Y | P | Y | Y | Y | - | P | ? | Y | Y | Y | Y | P | P | Y |
-| 14 | Temperature (cold) derating | Y | - | Y | Y (MKBM) | ? | - | - | - | - | - | - | - | - | - | Y |
+| 3 | Clear/average/overcast scenario days | ? | - | - | - | ? | - | ? | ? | ? | ? | ? | ? | - | - | Y |
+| 4 | Worst n-day / multi-day weather sequence | Y (presizing) | Y (multi-year series) | P (full-year series) | P (full-year series) | P (design period) | - | ? | ? | ? | ? | ? | ? | - | - | P (N-day series) |
+| **PV losses / models** | | | | | | | | | | | | | | | | |
+| 5 | 3D near shading / scene | Y | - | Y | - | Y | - | ? | P (shadow analysis) | Y | Y | ? | Y | - | - | - |
+| 6 | Horizon profile (multi-point / DEM) | Y | Y | ? | - | ? | - | ? | ? | ? | ? | ? | ? | - | P (via PVGIS) | P (one angle) |
+| 7 | Module temperature model | Y | Y | ? | ? | ? | P (Voc vs temp) | ? | ? | ? | ? | ? | ? | - | - | Y |
+| 8 | Inverter/MPPT efficiency curve (power and voltage) | Y | - | Y | - | ? | - | P | ? | ? | ? | ? | ? | - | - | P (MPPT vs Vin/Vbat; inverter constant) |
+| 9 | Clipping / DC:AC ratio modelling | P (overpower) | - | Y | - | Y | Y (PV power ratio) | Y | ? | Y | P (inverter loading) | ? | ? | - | - | P (MPPT current/charge limit) |
+| 10 | Mismatch, soiling, module quality | Y | P (single loss %) | ? | - | ? | - | ? | ? | ? | ? | ? | ? | - | - | Y |
+| 11 | PV degradation over years | Y | - | Y | ? | Y | - | ? | ? | ? | ? | ? | Y | - | - | - |
+| 12 | Snow loss | ? | P (inside loss %) | Y | - | ? | - | - | - | - | - | - | - | - | - | - |
+| **Battery** | | | | | | | | | | | | | | | | |
+| 13 | SOC, efficiency, DoD/cut-off, C-rate limits | Y | P (cut-off only) | Y | Y | Y | - | P | ? | ? | P | Y | Y | P | P | Y |
+| 14 | Temperature (cold) effect on battery | P (ageing input) | - | ? | Y (MKBM) | ? | - | - | - | - | - | - | - | - | - | Y |
 | 15 | Battery ageing (cycles / calendar / SOW) | Y | - | Y | Y | ? | - | P (cycles/yr) | - | - | - | - | P (2%/yr) | - | - | - |
-| 16 | Battery replacement in lifetime | P | - | Y | Y | ? | - | - | - | - | - | - | ? | - | - | - |
-| **Load / dispatch** |
-| 17 | 8760 hourly load import | Y | P (24 fractions) | Y | Y | Y | - | Y | ? | P | ? | Y | Y | - | - | P (monthly + 4 shapes) |
+| 16 | Battery replacement in lifetime | ? | - | Y | Y | ? | - | - | - | - | - | - | ? | - | - | - |
+| **Load / dispatch** | | | | | | | | | | | | | | | | |
+| 17 | 8760 hourly load import | Y | P (24 fractions/day) | Y | Y | P | - | ? | ? | P (loads set) | ? | ? | Y | - | - | P (monthly + 4 shapes) |
 | 18 | Appliance list builder with surge power | - | - | - | - | - | - | - | - | - | - | Y | P (tiers) | Y | Y (Ultrasolar, Akvadim) | - |
 | 19 | Self-consumption dispatch | Y | - | Y | Y | Y | - | Y | Y | Y | Y | Y | Y | - | P | Y (SBU-like) |
 | 20 | TOU / arbitrage / peak-shaving dispatch | Y | - | Y | Y | ? | - | Y | ? | Y | ? | Y | Y | - | - | - |
-| 21 | Backup generator (SOC start/stop, fuel, hours) | Y | - | Y | Y | Y | - | Y (Sunny Island) | - | - | - | - | - | - | P (advice) | - |
-| **Reliability / backup** |
-| 22 | Days-of-autonomy sizing | Y | - | - | - | Y | - | - | - | - | - | - | Y (days) | Y | Y | P |
-| 23 | LOLP / unmet-load fraction / missing energy | Y | Y | Y | Y | ? | - | - | - | - | - | - | - | - | - | P (coverage %, grid kWh) |
-| 24 | % days battery full/empty, SOC histogram | P | Y | ? | P | ? | - | - | - | - | - | - | - | - | - | - |
+| 21 | Backup generator (SOC start/stop, fuel, hours) | Y | - | ? | Y | Y | - | Y (Sunny Island) | - | - | - | - | - | - | P (advice only) | - |
+| **Reliability / backup** | | | | | | | | | | | | | | | | |
+| 22 | Days-of-autonomy sizing | Y | - | - | - | Y | - | - | - | - | - | - | Y (backup days) | Y | Y | P |
+| 23 | LOLP / unmet-load fraction / missing energy | Y | Y | P (outage hours) | Y | ? | - | - | - | - | - | - | - | - | - | P (coverage %, grid kWh) |
+| 24 | % days battery full/empty, SOC histogram | ? | Y | ? | ? | ? | - | - | - | - | - | - | - | - | - | - |
 | 25 | Outage schedule / user outage windows | Y (weak grid) | - | Y | Y (Grid) | - | - | - | - | P (backup option) | Y (backup hours) | - | Y | - | Y (Akvadim) | P (whole-period no-grid) |
-| 26 | Critical-load fraction | - | - | Y | ? | - | - | - | - | ? | Y | Y | Y | - | - | - |
+| 26 | Critical-load fraction | - | - | Y | ? | - | - | - | - | ? | Y | P (backup kW) | Y | - | - | - |
 | 27 | Probabilistic outage survival (P90 / every-hour start) | - | - | Y | - | - | - | - | - | - | - | - | Y (P90) | - | - | - |
-| **Sizing / optimisation** |
-| 28 | Optimisation over component sizes / alternatives | P | - | P | Y | P | Y (MPPT pick) | Y | Y | Y (ESS) | - | ? | ? | Y (simple) | P | Y (S x P options) |
-| 29 | Sensitivity analysis | ? | - | Y | Y | ? | - | - | - | - | - | - | - | - | - | - |
-| 30 | Tilt/azimuth optimisation | Y | Y | Y | - | ? | - | ? | ? | ? | ? | ? | ? | - | Y (SWE, cec.in.ua) | Y |
-| **Electrical checks** |
-| 31 | Cold Voc vs max input; Vmp vs MPPT window | Y | - | ? | - | Y | Y | Y | Y | ? | Y | ? | ? (3rd-party claim) | - | - | Y |
-| 32 | Isc vs MPPT input current limit | Y | - | - | - | Y | Y | Y | Y | ? | Y | ? | ? | - | - | Y |
-| 33 | Cable sizing / voltage drop / power loss | P (single R) | - | - | - | Y | Y (Toolkit) | Y | ? | P | - | ? | Y | - | - | Y (3 DC segments, ПУЭ) |
+| **Sizing / optimisation** | | | | | | | | | | | | | | | | |
+| 28 | Optimisation / comparison of alternatives | P (presizing) | - | ? | Y | ? | Y (MPPT match) | Y | P (auto strings) | Y (ESS) | - | ? | ? | Y (simple) | P | Y (S x P options) |
+| 29 | Sensitivity analysis | ? | - | ? | Y | ? | - | - | - | - | - | - | - | - | - | - |
+| 30 | Tilt/azimuth optimisation | ? | Y | ? | - | ? | - | ? | ? | ? | ? | ? | ? | - | Y (SWE, cec.in.ua) | Y |
+| **Electrical checks** | | | | | | | | | | | | | | | | |
+| 31 | Cold Voc vs max input; Vmp vs MPPT window | ? | - | ? | - | ? | Y | Y | P (input limits) | ? | Y | ? | ? (3rd-party claim) | - | - | Y |
+| 32 | Isc vs MPPT input current limit | ? | - | - | - | ? | Y | P | ? | ? | P | ? | ? | - | - | Y |
+| 33 | Cable sizing / voltage drop / power loss | P (single R) | - | - | - | Y | Y (Toolkit, MPPT calc) | Y | ? | ? | - | ? | Y | - | - | Y (3 DC segments, ПУЭ) |
 | 34 | Fuse / OCPD sizing | - | - | - | - | ? | - | ? | ? | ? | - | ? | Y | - | - | - |
 | 35 | Inverter surge vs load start-up | - | - | - | - | - | - | - | - | - | - | Y (peak kW) | - | P | Y | - |
-| 36 | Generator size window | ? | - | - | Y | Y | - | Y | - | - | - | - | - | - | - | - |
-| **Economics** |
-| 37 | Payback / NPV / LCOE | Y | P (LCOE) | Y | Y | Y | - | ? | Y | Y | P | Y | Y | - | Y (payback; Sanlarix NPV/IRR) | - |
+| 36 | Generator size check | ? | - | - | Y | Y | - | Y (80-120%) | - | - | - | - | - | - | - | - |
+| **Economics** | | | | | | | | | | | | | | | | |
+| 37 | Payback / NPV / LCOE | Y | P (LCOE only) | Y | Y | Y | - | ? | Y | Y | P | Y | Y | - | Y (payback; Sanlarix NPV/IRR) | - |
 | 38 | TOU tariffs | Y | - | Y | Y | ? | - | ? | ? | Y | ? | Y | Y | - | - | - |
-| 39 | Feed-in / net metering / net billing | Y | - | Y | Y | Y | - | ? | ? | ? | ? | Y | Y | - | Y (Vistan) | - |
+| 39 | Feed-in / net metering / net billing | Y | - | Y | P | Y | - | ? | ? | ? | ? | ? | Y | - | Y (Vistan) | - |
 | 40 | Price escalation, discount rate | Y | P (interest) | Y | Y | Y | - | ? | ? | ? | ? | Y | Y | - | P | - |
-| 41 | Self-consumption ratio & self-sufficiency KPIs | Y | - | Y | Y (RF) | Y | - | Y | Y | Y | ? | Y | ? | - | P (coverage) | P (coverage %) |
-| 42 | Bill before/after | - | - | Y | Y | ? | - | ? | ? | Y | ? | Y | Y | - | P | P (grid cost) |
-| **Reporting / UX** |
-| 43 | PDF report | Y | P (PDF of results) | P | Y | Y | - | Y | Y | Y | P | Y | Y | - | - | - |
-| 44 | Loss diagram (waterfall) | Y | - | Y | - | ? | - | - | - | - | - | - | - | - | - | ? |
-| 45 | Single-line / circuit diagram | - | - | - | - | Y | - | - | - | P | - (DXF) | Y | Y | - | - | - |
-| 46 | BOM / parts list | - | - | - | - | Y | - | ? | ? | Y | Y | Y | Y | Y (kits) | Y (kits w/ prices) | - |
-| 47 | Component database | Y | - | Y (CEC) | Y | Y (26k/7.5k/5.5k+) | Y (Victron) | Y (SMA) | Y (Fronius) | Y (Huawei) | Y (SE) | Y | Y | P | P | P (presets) |
-| 48 | CSV / data export | Y | Y | Y | Y | Y | Y (export cfg) | ? | ? | ? | ? | ? | ? | - | - | Y |
-| 49 | Save/share projects | Y | - | Y | Y | Y | Y (links) | Y | Y | Y | Y | Y | Y | Y (Renogy) | - | Y (JSON) |
+| 41 | Self-consumption ratio & self-sufficiency KPIs | P | - | ? | P (renewable fraction) | Y | - | Y | Y | P (energy distribution) | ? | Y | ? | - | P (coverage) | P (coverage %) |
+| 42 | Bill before/after | - | - | Y | ? | ? | - | ? | ? | Y | ? | Y | Y | - | P | P (grid cost) |
+| **Reporting / UX** | | | | | | | | | | | | | | | | |
+| 43 | PDF report | Y | ? | ? | ? | Y | - | ? | Y | Y | P (summary export) | Y (proposal) | Y (web proposal) | - | - | - |
+| 44 | Loss diagram (waterfall) | Y | - | ? | - | ? | - | - | - | - | - | - | - | - | - | ? |
+| 45 | Single-line / circuit diagram | - | - | - | - | Y | - | - | - | P (connection details) | - (DXF only) | Y | Y | - | - | - |
+| 46 | BOM / parts list | - | - | - | - | Y (Renusol) | - | ? | ? | Y (device list) | Y | P (line items) | ? | Y (kits) | Y (kits with prices) | - |
+| 47 | Component database | Y | - | Y (CEC) | ? | Y (26k/7.5k/5.5k+) | Y (Victron) | Y (SMA) | Y (Fronius) | Y (Huawei) | Y (SolarEdge) | ? | ? | P | P | P (presets) |
+| 48 | CSV / data export | ? | Y | ? | ? | ? | Y (config export) | ? | ? | ? | ? | ? | ? | - | - | Y |
+| 49 | Save / share projects | Y | - | Y | Y | Y | Y (links) | ? | Y | ? | ? | ? | ? | Y (Renogy) | - | Y (JSON) |
 | 50 | API / scripting | - | Y | Y (PySAM) | - | - | - | - | - | - | - | - | - | - | - | - |
-| 51 | 3D / satellite layout | Y | - | Y | - | Y | - | ? | ? | Y | Y | Y | Y | - | - | - |
+| 51 | 3D / satellite layout | Y | - | Y (3D shade calc) | - | Y | - | ? | ? | Y | Y | ? | Y | - | - | - |
 
 ### Inferences
 Prioritised list of what solar_calc lacks (P1 = high value for Ukrainian 1-30 kW hybrid/backup users and feasible in a Python desktop app; P3 = low value or out of scope):
@@ -345,6 +345,6 @@ Prioritised list of what solar_calc lacks (P1 = high value for Ukrainian 1-30 kW
 - Differentiators to preserve: detailed DC cable model on three segments (Cu/Al, temperature, contacts, ПУЭ ampacity), MPPT efficiency vs Vin/Vbat and self-consumption, battery cold derating, low-light module behaviour, S x P option comparison, clear/average/overcast day scenarios, DC-coupled hybrid off-grid modelling (which PV*SOL's stand-alone module reportedly cannot do — [Valentin forum](https://forum.valentin-software.com/topic/10572-off-grid-system-with-battery)).
 
 ### Gaps
-- Several checklist cells are "?" because vendor help pages could not be fetched; the matrix should be treated as a lower bound for vendor tools.
+- Several checklist cells are "?" because vendor help pages could not be fetched; "?" means "not verified", not "absent" (e.g. PVsyst very likely exports CSV and optimises tilt, but no source was retrieved). The matrix is a lower bound for commercial/vendor tools.
 - solar_calc column is based on the feature list supplied in the brief, not on reading the code; rows 18, 34, 35, 44 should be verified in the source.
 - No quantitative comparison (e.g. yield difference solar_calc vs PVsyst/PVGIS for Kyiv) was performed.
