@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-rem build_exe.bat  v1.2.1 — сборка solar_calc.exe
+rem build_exe.bat  v1.3.0 — сборка solar_calc.exe
 cd /d "%~dp0"
 echo === [1/4] Проверка Python ===
 where python >nul 2>nul || (echo Python не найден. Установите Python 3.10+ с python.org & pause & exit /b 1)
