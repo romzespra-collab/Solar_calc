@@ -1,0 +1,8 @@
+config.json
+*.log
+selftest.txt
+__pycache__/
+build/
+dist/
+release/
+data/
