@@ -31,7 +31,16 @@ solar_calc  v1.3.0
     LF560K, MB56), REPT CB75 — количество, сборка S×P, ёмкость, лимит тока заряда, холод;
   • инвертор: модель, КПД, холостой ход, часы работы;
   • потребление дома за месяц или за год → баланс по месяцам, автономия АКБ.
-Панели: типовые + Jinko Tiger Neo 590, JA Solar 585, LONGi Hi-MO X6 585 / X10 480, Trina 575.
+База оборудования (паспорта):
+  • панели — 101 модель: Jinko, LONGi, JA Solar, Trina, Canadian Solar, Risen, Astronergy, AIKO,
+    Tongwei, DAH, Huasun, Sunova, Yingli, Leapton, Ulica, Abi-Solar, Q CELLS, REC, Maxeon,
+    Victron (12 В), Axioma + типовые;
+  • инверторы — 53 (41 гибрид со встроенным MPPT): Deye, Must, Axioma, Anern, Growatt, Luxpower,
+    EASun, SRNE, PowMr, Voltronic Axpert, Solis, Sofar, Victron (MultiPlus/Phoenix/EasySolar);
+  • MPPT-контроллеры — 30: Victron SmartSolar/BlueSolar, EPEver, SRNE, PowMr, Must, Renogy;
+  • АКБ — 38: Pylontech, Deye, Dyness, Felicity, Must, Axioma, LiTime, Victron, сборки 16S,
+    ячейки EVE/REPT, свинец.
+  Модели с пометкой «≈ не проверено» — данные из каталога, не из паспорта; сверяйте с табличкой.
 Страницы:
   📊 Прогноз выработки — по часам и месяцам, куда уходит энергия, проверки;
   🏠 Покрытие дома — сколько % потребления закрывает станция, сколько из сети и за сколько грн,
