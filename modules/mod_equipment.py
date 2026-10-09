@@ -134,6 +134,20 @@ INVERTER_DB = make_db([
      "х.х. 18 Вт (паспорт) · без MPPT"),
 ])
 
+
+def _inv_group(p):
+    v = int(p.get("inv_bat_v") or 0)
+    return (f"{v} В" if v else "Любое напряжение") + (" · с MPPT (гибрид)" if p.get("mppt") else " · без MPPT")
+
+
+# порядок выбора: производитель (как в базе) → 12 / 24 / 48 В → с MPPT, без MPPT → как в базе
+_brand_pos = {}
+for _b, *_ in INVERTER_DB.values():
+    _brand_pos.setdefault(_b, len(_brand_pos))
+INVERTER_DB = dict(sorted(INVERTER_DB.items(), key=lambda kv: (
+    _brand_pos[kv[1][0]], int(kv[1][2].get("inv_bat_v") or 0) or 999, not kv[1][2].get("mppt"))))
+INVERTER_SERIES = {k: _inv_group(v[2]) for k, v in INVERTER_DB.items()}     # группа «напряжение АКБ · MPPT»
+
 INVERTER_PRESETS = presets_of(INVERTER_DB, "Свой инвертор")
 
 

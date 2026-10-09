@@ -1,7 +1,8 @@
-"""mod_page_settings.py  v1.5.1
+"""mod_page_settings.py  v1.6.0
 Страница «Настройки станции»: карточка «Моя станция» (что стоит), поля, пресеты, реакция на изменения.
 
 Журнал:
+v1.6.0: инвертор — производитель → напряжение АКБ (12 / 24 / 48 В, с MPPT / без) → модель.
 v1.5.1: АКБ × сборок (1–10); у сборок из ячеек/АКБ последовательно — «сб.», у готовых АКБ на систему — «шт».
 v1.5.0: панели — производитель → серия → мощность из полной базы (21 тыс.), 🔎 поиск у всех выборов.
 v1.4.0: текстовое поле (место/город).
@@ -16,7 +17,7 @@ from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QC
 
 from .mod_base import log
 from .mod_panels import PANEL_DB, PANEL_SERIES
-from .mod_equipment import INVERTER_DB, MPPT_DB, BATTERY_DB, MPPT_PRESETS, inv_is_hybrid
+from .mod_equipment import INVERTER_DB, INVERTER_SERIES, MPPT_DB, BATTERY_DB, MPPT_PRESETS, inv_is_hybrid
 from .mod_fields import (INPUT_CARDS, INT_KEYS, INV_KEYS, WIRE_S_KEYS, WIRE_RANGE, PRESET_GROUPS, MPPT_MODES,
                          s2d, d2s)
 from .mod_model import make_ctx, layouts, layout_status, best_layout, bank_series
@@ -111,7 +112,7 @@ class SettingsPage:
         self.lab_layout = hint(True)
         g.addWidget(self.lab_layout, 3, 1, 1, 3)
         # инвертор
-        self.pk_inv = PresetPicker(INVERTER_DB, "Свой инвертор — параметры ниже", what="инвертор")
+        self.pk_inv = PresetPicker(INVERTER_DB, "Свой инвертор — параметры ниже", series=INVERTER_SERIES, what="инвертор")
         self.pk_inv.changed.connect(lambda k: self._on_field("inv_preset", k))
         self.w["inv_preset"] = self.pk_inv
         g.addWidget(lab("Инвертор", "Инвертор: гибрид (MPPT внутри) или без MPPT"), 4, 0)

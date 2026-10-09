@@ -1,7 +1,8 @@
-"""mod_widgets.py  v1.5.0
+"""mod_widgets.py  v1.6.0
 виджеты Qt: Toggle, Segmented, Stepper, график Chart, таблицы с меню
 
 Журнал:
+v1.6.0: PresetPicker: группа без диапазона мощности (инверторы — по напряжению АКБ).
 v1.5.0: PresetPicker — третий уровень «серия» (панели: производитель → серия → мощность), 🔎 поиск по всей
         базе (FindDialog), меню по правому клику (найти, копировать название/паспорт, своё).
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; PresetPicker — выбор «производитель → модель» из базы.
@@ -248,16 +249,19 @@ class PresetPicker(QWidget):
         ss = self.tree.get(brand) if brand else None
         if ss:
             for name, keys in ss.items():
-                ps = [self.db[k][2]["pmax"] for k in keys] if self.series else []
-                if self.series and keys and isinstance(self.db[keys[0]][2], dict) and ps:
-                    lo, hi = min(ps), max(ps)
-                    rng = f"{lo:g} Вт" if lo == hi else f"{lo:g}–{hi:g} Вт"
-                    cs.addItem(f"{name}  ·  {rng}  ({len(keys)})", name)
-                    info = self.db[keys[0]][3]
-                    if info:
-                        cs.setItemData(cs.count() - 1, info, Qt.ToolTipRole)
-                else:
+                if not self.series:
                     cs.addItem(name or "—", name)
+                    continue
+                ps = [self.db[k][2].get("pmax") for k in keys if isinstance(self.db[k][2], dict)]
+                if ps and None not in ps:                          # панели: диапазон мощности серии
+                    lo, hi = min(ps), max(ps)
+                    rng = f"  ·  {lo:g} Вт" if lo == hi else f"  ·  {lo:g}–{hi:g} Вт"
+                    info = self.db[keys[0]][3]
+                else:
+                    rng, info = "", ""
+                cs.addItem(f"{name}{rng}  ({len(keys)})", name)
+                if info:
+                    cs.setItemData(cs.count() - 1, info, Qt.ToolTipRole)
         else:
             cs.addItem("—", None)
         cs.setEnabled(bool(ss))
