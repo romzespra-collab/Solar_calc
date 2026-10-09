@@ -95,7 +95,6 @@
     "load_mode": "m",
     "load_kwh": 1000,
     "load_winter": 30.0,
-    "night_share": 50,
     "load_profile": "typ",
     "grid_mode": "off",
     "back_soc": 40.0,

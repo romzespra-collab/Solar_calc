@@ -15,6 +15,7 @@ v1.3.0: вынесено из solar_calc.pyw v1.2.1; PresetPicker — выбор
 
 import csv
 import math
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF, QSize, QCoreApplication
 from PySide6.QtGui import QPainter, QColor, QPen, QFont, QFontMetrics, QGuiApplication, QPainterPath
@@ -106,6 +107,11 @@ class _Spin(QDoubleSpinBox):
 
 
 class NoWheelCombo(QComboBox):
+    """Колесо мыши — только когда список уже в фокусе (кликнули): прокрутка страницы не меняет значение."""
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.setFocusPolicy(Qt.StrongFocus)                  # колесо само фокус не берёт
+
     def wheelEvent(self, e):
         if self.hasFocus():
             super().wheelEvent(e)
@@ -368,8 +374,11 @@ class PresetPicker(QWidget):
             b, name, *_ = self.db[cur]
             dlg.ed.setText(f"{b} {name.split('·')[-1].strip()}".lower())
             dlg.ed.selectAll()
-        if dlg.exec() == QDialog.Accepted and dlg.key:
-            self._select(dlg.key)
+        ok = dlg.exec() == QDialog.Accepted and dlg.key
+        key = dlg.key
+        dlg.deleteLater()                                    # окно поиска — не копить в памяти
+        if ok:
+            self._select(key)
 
     def _passport(self):
         k = self.value()
@@ -480,6 +489,14 @@ def _btn(text, name=None, tip=None, slot=None):
     if slot:
         b.clicked.connect(lambda _=False, f=slot: f())        # без checked: иначе он попадёт в lambda x=... слота
     return b
+
+
+def ask_save(parent, title, default, filt):
+    """Окно «Сохранить как» (в цветах темы); имя без расширения — расширение из имени по умолчанию."""
+    fn, _ = QFileDialog.getSaveFileName(parent, title, str(default), filt, options=QFileDialog.DontUseNativeDialog)
+    if fn and not Path(fn).suffix:
+        fn += Path(str(default)).suffix
+    return fn
 
 
 def _save_failed(parent, fn, e):
@@ -731,8 +748,7 @@ class Chart(QWidget):
         m.exec(self.mapToGlobal(pos))
 
     def _save_png(self):
-        fn, _ = QFileDialog.getSaveFileName(self, "Сохранить график", str(APP_ROOT / "график.png"),
-                                            "PNG (*.png)", options=QFileDialog.DontUseNativeDialog)
+        fn = ask_save(self, "Сохранить график", str(APP_ROOT / "график.png"), "PNG (*.png)")
         if not fn:
             return
         if self.grab().save(fn, "PNG"):
@@ -763,7 +779,8 @@ def make_table(headers, extra_actions=None):
             a.setEnabled(row >= 0)
         if t._extra:
             m.addSeparator()
-        m.addAction("📋 Копировать строку", lambda: QGuiApplication.clipboard().setText(table_tsv(t, row)))
+        a = m.addAction("📋 Копировать строку", lambda: QGuiApplication.clipboard().setText(table_tsv(t, row)))
+        a.setEnabled(row >= 0)
         m.addAction("📋 Копировать таблицу", lambda: QGuiApplication.clipboard().setText(table_tsv(t)))
         m.addAction("💾 Экспорт CSV…", lambda: export_table_csv(t))
         m.exec(t.viewport().mapToGlobal(pos))
@@ -782,8 +799,7 @@ def table_tsv(t, row=None):
 
 
 def export_table_csv(t):
-    fn, _ = QFileDialog.getSaveFileName(t, "Экспорт CSV", str(APP_ROOT / "таблица.csv"), "CSV (*.csv)",
-                                        options=QFileDialog.DontUseNativeDialog)
+    fn = ask_save(t, "Экспорт CSV", str(APP_ROOT / "таблица.csv"), "CSV (*.csv)")
     if not fn:
         return
     try:

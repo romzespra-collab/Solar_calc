@@ -1,17 +1,17 @@
-"""mod_forecast.py  v1.9.4
+"""mod_forecast.py  v1.9.7
 Прогноз выработки по погоде: радиация Open-Meteo по часам → та же цепочка, что и весь расчёт
 (положение Солнца mod_sun → плоскость панелей → панели/провод/MPPT → АКБ → дом). По дням:
 кВт·ч в АКБ, на какой «типовой день» месяца похоже (ясно/средне/пасмурно), заряд АКБ по 10 минутам,
 переход на сеть.
 
 Журнал:
+v1.9.7: заряд по прогнозу — гибрид и отдельные MPPT раздельно (своим током); убрана неиспользуемая kwh().
 v1.9.4: «на какой день похоже» — только ясно / средне / пасмурно (погода региона — не типовой день).
 v1.9.0: разные поля панелей — облучённость считается для каждого поля (свой угол и азимут).
 v1.4.0: первая версия.
 """
 
 import datetime as dt
-import math
 
 from .mod_astro import to_utc, to_local, sun_altaz_utc
 from .mod_base import W_KEYS
@@ -76,7 +76,7 @@ def run(s, fc, res=None, soc0=70.0, days=None):
     for di in range(n):
         day = first + dt.timedelta(days=di)
         m = day.month - 1
-        pts, acc, g_wh, p_wh, cover = [], [0.0] * NST, 0.0, 0.0, 0
+        pts, pctl, acc, g_wh, p_wh, cover = [], [], [0.0] * NST, 0.0, 0.0, 0
         for i in range(N_STEPS):
             local = dt.datetime(day.year, day.month, day.day) + dt.timedelta(hours=(i + 0.5) * DT)
             u = to_utc(local, zone)
@@ -84,6 +84,7 @@ def run(s, fc, res=None, soc0=70.0, days=None):
             G = _interp(ghi, x, edge=-1.0)
             if G is None or G < 0:
                 pts.append(((i + 0.5) * DT, 0.0))
+                pctl.append(0.0)
                 continue
             cover += 1
             G = max(0.0, G)
@@ -101,11 +102,12 @@ def run(s, fc, res=None, soc0=70.0, days=None):
             g_wh += G * DT
             p_wh += irr * DT
             pts.append(((i + 0.5) * DT, r[8]))
+            pctl.append(r[14])
         full = cover >= N_STEPS * 0.9
         if cover < N_STEPS * 0.1:
             continue                                      # суток нет в прогнозе
         load = load_day_wh(c, m)
-        rr, e, og_new = soc_run(c, pts, load, c["profile"], e, og)
+        rr, e, og_new = soc_run(c, pts, load, c["profile"], e, og, pctl if c["mixed"] else None)
         rr["start_grid"] = og
         og = og_new
         like = None
@@ -136,7 +138,3 @@ def now_power(s, cur, utc=None):
 def sun_now(s, utc=None):
     utc = utc or dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
     return sun_altaz_utc(float(s["lat"]), float(s["lon"]), utc)
-
-
-def kwh(x):
-    return x / 1000.0 if x is not None and not math.isnan(x) else 0.0

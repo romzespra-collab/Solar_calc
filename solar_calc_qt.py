@@ -2,7 +2,9 @@
 Главное окно программы (PySide6): боковая панель, страницы, лог, статус.
 
 Журнал:
-v1.9.7: ручка переключателей — белая в обеих темах (цвет передаётся явно).
+v1.9.7: профиль и config с BOM (Блокнот) открываются; «Настройки сохранены» — только если сохранились; смена
+        темы перерисовывает текущую страницу (схемы, угол, провод, погода); сохранить без расширения — добавит
+        его; ошибки интерфейса — с трассировкой в файле лога; ручка переключателей — белая в обеих темах.
 v1.9.4: погода «📍 Регион 5 лет»: выбрана, а данных для точки нет — загрузка сама (один раз на точку).
 v1.9.0: тема и итог расчёта обновляют холст конструктора станции.
 v1.5.0: без изменений окна — версия поднята вместе с программой (база панелей, выбор серии, поиск).
@@ -13,7 +15,6 @@ v1.3.0: вынесено из solar_calc.pyw v1.2.1; страницы — мик
 import base64
 import json
 import logging
-import logging.handlers
 import queue
 import time
 from pathlib import Path
@@ -29,7 +30,7 @@ from modules.mod_sun import SunData
 from modules.mod_config import DEFAULT_SYS, clean_sys, load_config, save_config
 from modules.mod_model import compute_all
 from modules.mod_theme import _QT_THEMES, _OK, _ERR, _WARN, _qss
-from modules.mod_widgets import app_name, app_version, Segmented, NoWheelCombo, _lab, _card, _save_failed
+from modules.mod_widgets import app_name, app_version, Segmented, NoWheelCombo, _lab, _card, _save_failed, ask_save
 
 from modules.mod_page_settings import SettingsPage
 from modules.mod_page_results import ResultsPages
@@ -258,6 +259,11 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
         self._apply_theme()
         if self.R is not None:
             self._show_results()
+        cur = self.page_names[self.stack.currentIndex()]
+        if cur in ("schemes", "tilt", "wire"):            # графики и подписи этих страниц — в новых цветах
+            self._refresh_page(cur, force=True)
+        elif cur in ("weather", "sky"):
+            self._wx_refresh()
 
     def _p(self):
         return _QT_THEMES.get(self.cfg.get("theme", "dark"), _QT_THEMES["dark"])
@@ -302,8 +308,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
         m.exec(lv.mapToGlobal(pos))
 
     def _save_log(self):
-        fn, _ = QFileDialog.getSaveFileName(self, "Сохранить лог", str(APP_ROOT / "лог.txt"), "Текст (*.txt)",
-                                            options=QFileDialog.DontUseNativeDialog)
+        fn = ask_save(self, "Сохранить лог", str(APP_ROOT / "лог.txt"), "Текст (*.txt)")
         if not fn:
             return
         try:
@@ -343,7 +348,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
                 try:
                     item()
                 except Exception as e:
-                    log.error(f"✗ Ошибка интерфейса: {e}")
+                    log.error(f"✗ Ошибка интерфейса: {e}", exc_info=True)
             elif isinstance(item, tuple) and item[0] == "log":
                 self._append_log(item[1], item[2])
             elif isinstance(item, tuple) and item[0] == "busy":
@@ -410,8 +415,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
         return d if Path(d).exists() else str(APP_ROOT)
 
     def save_profile(self):
-        fn, _ = QFileDialog.getSaveFileName(self, "Сохранить профиль", str(Path(self._dir()) / "моя_станция.json"),
-                                            "Профиль (*.json)", options=QFileDialog.DontUseNativeDialog)
+        fn = ask_save(self, "Сохранить профиль", str(Path(self._dir()) / "моя_станция.json"), "Профиль (*.json)")
         if not fn:
             return
         try:
@@ -428,7 +432,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
         if not fn:
             return
         try:
-            data = json.loads(Path(fn).read_text(encoding="utf-8"))
+            data = json.loads(Path(fn).read_text(encoding="utf-8-sig"))
             sysd = data.get("sys", data) if isinstance(data, dict) else None
             if not isinstance(sysd, dict) or not set(sysd) & set(DEFAULT_SYS):
                 raise ValueError("в файле нет параметров станции")
@@ -445,9 +449,11 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
 
     def _save_all(self):
         self.cfg["geometry"] = base64.b64encode(bytes(self.saveGeometry())).decode()
-        save_config(self.cfg)
-        log.info("💾 Настройки сохранены")
-        self._status("сохранено")
+        if save_config(self.cfg):
+            log.info("💾 Настройки сохранены")
+            self._status("сохранено")
+        else:
+            self._status("не сохранено!")
 
     def closeEvent(self, e):
         win = getattr(self, "_skywin", None)

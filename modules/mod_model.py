@@ -1,7 +1,11 @@
-"""mod_model.py  v1.9.0
+"""mod_model.py  v1.9.7
 физика станции: панели → провод → MPPT → АКБ → инвертор; заряд АКБ по 10 минутам
 
 Журнал:
+v1.9.7: гибрид + отдельные MPPT: заряд АКБ раздельно — инвертор своим током (pch_inv), контроллеры своим, всё
+        вместе — до предела АКБ (pch_bank); раньше токи складывались и гибрид «заряжал» сверх своего предела.
+        sim_point → + outb_ctl, run_day → curve_ctl, soc_run(…, ctl). Потери на кабелях контроллер → АКБ — у
+        каждого контроллера свой кабель (раньше общий ток через один). Убраны k_tot и «vin» дня (не читались).
 v1.9.0: разные поля панелей (pv_fields): основное + другие на входах инвертора (s["pv_extra"]) + отдельные
         MPPT-контроллеры на АКБ со своим полем (s["ctl_extra"], до 6) — у каждого поля своя панель, схема,
         угол и азимут; солнце считается по каждому полю, мощности складываются; пределы: мощность PV гибрида —
@@ -165,7 +169,7 @@ def make_ctx(s):
     mixed = builtin and any(fc["grp"] == "ctl" for fc in fields)   # гибрид + отдельные контроллеры на АКБ
     c = dict(fields[0])
     c.update(builtin=builtin, mixed=mixed, fields=fields, main_npan=c["npan"], main_pstc=c["pstc_tot"],
-             npan=sum(fc["npan"] for fc in fields), k_tot=sum(fc["k"] for fc in fields),
+             npan=sum(fc["npan"] for fc in fields),
              eta_bat=f("eta_bat") / 100.0, inv_eta=f("inv_eta") / 100.0, inv_idle=f("inv_idle"))
     c["pstc_tot"] = sum(fc["pstc_tot"] for fc in fields)
     # провода со стороны АКБ: 4 контакта на линию (наконечники + автомат/предохранитель);
@@ -195,6 +199,10 @@ def make_ctx(s):
         c["pv_pmax"] = f("pv_pmax")
         c["pout_max"] = c["pv_pmax"] if c["pv_pmax"] > 0 else 1e12
         c["pch_max"] = c["ilim"] * c["vbat"]
+        # гибрид + отдельные MPPT: инвертор заряжает своим током, контроллеры — своим, всё вместе — до предела АКБ
+        inv_i = f("iout_max")
+        c["pch_inv"] = (min(inv_i, c["bank_ich"]) if c["bank_ich"] > 0 else inv_i) * c["vbat"]
+        c["pch_bank"] = c["bank_ich"] * c["vbat"] if c["bank_ich"] > 0 else 1e12
     else:
         c["pv_pmax"] = 0.0
         c["pout_max"] = c["ilim"] * c["vbat"]
@@ -262,39 +270,47 @@ def _sim_field(c, poa, ta):
 
 
 def sim_point(c, poa, ta):
-    """→ (pot, soil, cell, mm, arr, pin, conv, out, outb, vin, I, vp, tc, R) по всем полям.
+    """→ (pot, soil, cell, mm, arr, pin, conv, out, outb, vin, I, vp, tc, R, outb_ctl) по всем полям.
     poa — облучённость плоскости (Вт/м²): число (все поля одинаково) или список по полям c["fields"].
-    vin / I / vp / tc / R — основного поля (на один его вход MPPT)."""
+    vin / I / vp / tc / R — основного поля (на один его вход MPPT). outb_ctl — сколько из outb дали отдельные
+    MPPT у гибрида (они заряжают АКБ своим током, мимо предела заряда инвертора)."""
     fields = c["fields"]
     if not isinstance(poa, (list, tuple)):
         poa = [poa] * len(fields)
     vb = c["vbat"]
     if len(fields) == 1:
-        r = _sim_field(fields[0], poa[0], ta)
-        out = min(r[6], fields[0]["cap"], c["pout_max"])
-        loss = (out / vb) ** 2 * c["rb"]
-    else:
-        acc, inv, ctl, loss, r = [0.0] * 7, 0.0, 0.0, 0.0, None
-        for fc, g in zip(fields, poa):
-            rf = _sim_field(fc, g, ta)
-            for i in range(7):
-                acc[i] += rf[i]
-            if fc["grp"] == "inv":
-                inv += rf[6]
-            else:
-                o = min(rf[6], fc["cap"])           # контроллер режет свой ток заряда
-                ctl += o
-                loss += (o / vb) ** 2 * c["rb_ctl"]  # у каждого контроллера свой кабель до АКБ
-            r = r or rf
-        r = tuple(acc) + r[7:]
-        if c["mixed"]:
-            out = min(inv, c["pout_max"]) + ctl     # предел PV гибрида — только на его входы
-        elif c["builtin"]:
-            out, loss = min(inv, c["pout_max"]), 0.0
+        fc = fields[0]
+        r = _sim_field(fc, poa[0], ta)
+        out = min(r[6], fc["cap"], c["pout_max"])
+        loss = (out / vb) ** 2 * c["rb"] / max(1, fc["k"])      # у каждого из k контроллеров свой кабель до АКБ
+        return r[:7] + (out, max(0.0, out - loss)) + r[7:] + (0.0,)
+    acc, inv, ctl, sep, r = [0.0] * 7, 0.0, 0.0, [], None
+    for fc, g in zip(fields, poa):
+        rf = _sim_field(fc, g, ta)
+        for i in range(7):
+            acc[i] += rf[i]
+        if fc["grp"] == "inv":
+            inv += rf[6]
         else:
-            out = min(ctl, c["pout_max"])           # только контроллеры: общий ток в АКБ
-            loss = (out / vb) ** 2 * c["rb"]
-    return r[:7] + (out, max(0.0, out - loss)) + r[7:]
+            o = min(rf[6], fc["cap"])               # контроллер режет свой ток заряда
+            ctl += o
+            sep.append((o, max(1, fc["k"])))
+        r = r or rf
+    r = tuple(acc) + r[7:]
+    ctl_b = 0.0
+    if c["mixed"]:
+        loss = sum((o / vb) ** 2 * c["rb_ctl"] / k for o, k in sep)   # у каждого контроллера свой кабель
+        ctl_b = max(0.0, ctl - loss)
+        inv_out = min(inv, c["pout_max"])          # предел PV гибрида — только на его входы
+        out, outb = inv_out + ctl, inv_out + ctl_b
+    elif c["builtin"]:
+        out = outb = min(inv, c["pout_max"])
+    else:
+        out = min(ctl, c["pout_max"])               # только контроллеры: общий предел — ток заряда АКБ
+        sc = out / ctl if ctl > 0 else 0.0
+        loss = sum((o * sc / vb) ** 2 * c["rb"] / k for o, k in sep)
+        outb = max(0.0, out - loss)
+    return r[:7] + (out, outb) + r[7:] + (ctl_b,)
 
 
 NST = 9   # число этапов мощности в кортеже sim_point
@@ -303,10 +319,9 @@ NST = 9   # число этапов мощности в кортеже sim_point
 def run_day(c, pts):
     """pts — [(час, POA, t воздуха)]; POA — число или список по полям."""
     acc = [0.0] * NST
-    curve = []
+    curve, cctl = [], []
     peak = 0.0
     peak_i = 0.0
-    vin_lo, vin_hi = 1e9, 0.0
     wts = [fc["pstc_tot"] / max(1.0, c["pstc_tot"]) for fc in c["fields"]]
     poa_sum = 0.0
     for tl, poa, ta in pts:
@@ -315,13 +330,12 @@ def run_day(c, pts):
         for k in range(NST):
             acc[k] += r[k] * DT
         curve.append((tl, r[8]))
+        cctl.append(r[14])
         if r[8] > peak:
             peak = r[8]
             peak_i = r[7] / c["vbat"]
-        if r[8] > 0:
-            vin_lo, vin_hi = min(vin_lo, r[9]), max(vin_hi, r[9])
-    return {"wh": acc, "curve": curve, "peak": peak, "peak_i": peak_i,
-            "vin": (vin_lo if vin_hi > 0 else 0.0, vin_hi), "poa_wh": poa_sum * DT}
+    return {"wh": acc, "curve": curve, "curve_ctl": cctl if c["mixed"] else None, "peak": peak, "peak_i": peak_i,
+            "poa_wh": poa_sum * DT}
 
 
 def day_pts(s, sd, m, w):
@@ -362,9 +376,29 @@ def load_day_wh(c, m):
     return c["load_month"] * (1 + c["load_winter"] * math.cos(2 * math.pi * m / 12.0)) * 12.0 / 365.0 * 1000.0
 
 
-def soc_run(c, curve, load_wh, prof, e, on_grid):
+def _charge(c, pv, pc, ldc, pch):
+    """Сколько идёт в АКБ при излишке солнца: (в АКБ, пропало). pc — часть pv от отдельных MPPT (гибрид +
+    контроллеры): гибрид кормит дом и заряжает своим током, контроллеры — своим, всё вместе — до предела АКБ."""
+    if pc is None:
+        net = pv - ldc
+        chg = min(net, pch)
+        return chg, net - chg
+    pi = pv - pc
+    sur = pi - ldc                                  # излишек солнца гибрида после дома
+    if sur >= 0:
+        to_bat = min(sur, c["pch_inv"]) + pc
+        lost = sur - min(sur, c["pch_inv"])
+    else:
+        to_bat, lost = pc + sur, 0.0                # контроллеры докрывают дом, остаток — в АКБ
+    chg = min(to_bat, c["pch_bank"])
+    return chg, lost + to_bat - chg
+
+
+def soc_run(c, curve, load_wh, prof, e, on_grid, ctl=None):
     """Один день шагами DT: солнце → дом, излишек → АКБ, нехватка → АКБ, АКБ пуста → сеть.
-    e — запас над минимальным зарядом, Вт·ч. → (итог дня, e, on_grid)."""
+    e — запас над минимальным зарядом, Вт·ч; ctl — часть солнца от отдельных MPPT по шагам (гибрид +
+    контроллеры), иначе None. → (итог дня, e, on_grid)."""
+    split = bool(ctl) and c.get("mixed")
     usable = c["usable_wh"]
     cap = max(1.0, c["bank_wh"])
     base = cap - usable
@@ -378,7 +412,8 @@ def soc_run(c, curve, load_wh, prof, e, on_grid):
     pts, events = [], []
     grid_wh = grid_load = wasted = pv_sum = load_dc_sum = 0.0
     soc_min = 100.0
-    for tl, pv in curve:
+    for j, (tl, pv) in enumerate(curve):
+        pc = min(ctl[j], pv) if split else None
         lac = load_wh * prof[int(tl) % 24]
         ldc = lac / eta_i + idle
         ldc += (ldc / vb) ** 2 * c["ri"]
@@ -386,9 +421,9 @@ def soc_run(c, curve, load_wh, prof, e, on_grid):
         if not on_grid:
             net = pv - ldc
             if net >= 0:
-                chg = min(net, pch)
+                chg, lost = _charge(c, pv, pc, ldc, pch)
                 e += chg * eta_b * DT
-                wasted += (net - chg) * DT
+                wasted += lost * DT
             else:
                 need = -net * DT
                 if e >= need:
@@ -403,9 +438,9 @@ def soc_run(c, curve, load_wh, prof, e, on_grid):
         else:
             gw = lac + idle
             grid_load += lac * DT
-            chg = min(pv, pch)
+            chg, lost = _charge(c, pv, pc, 0.0, pch)        # дом — от сети, всё солнце — в АКБ
             e += chg * eta_b * DT
-            wasted += (pv - chg) * DT
+            wasted += lost * DT
         if e > usable:
             wasted += (e - usable) / eta_b
             e = usable
@@ -422,13 +457,13 @@ def soc_run(c, curve, load_wh, prof, e, on_grid):
                  load_dc=load_dc_sum, load=load_wh, soc_min=soc_min, start_grid=False), e, on_grid)
 
 
-def soc_steady(c, curve, load_wh, prof):
+def soc_steady(c, curve, load_wh, prof, ctl=None):
     """Повторяет одинаковый день до установившегося режима. Если режим циклический
     (день от АКБ / день от сети), итоги усредняются по 6 дням, график — показательный день."""
     e, og = c["usable_wh"] * 0.5, False
     for _ in range(10):
         e0, og0 = e, og
-        r, e, og = soc_run(c, curve, load_wh, prof, e, og)
+        r, e, og = soc_run(c, curve, load_wh, prof, e, og, ctl)
         if abs(e - e0) < 0.002 * max(1.0, c["bank_wh"]) and og == og0:
             r["start_grid"] = og0
             r["cycle"] = 1
@@ -436,7 +471,7 @@ def soc_steady(c, curve, load_wh, prof):
     days = []
     for _ in range(6):
         sg = og
-        r, e, og = soc_run(c, curve, load_wh, prof, e, og)
+        r, e, og = soc_run(c, curve, load_wh, prof, e, og, ctl)
         r["start_grid"] = sg
         days.append(r)
     rep = next((d for d in reversed(days) if any(k == "grid" for _, k in d["events"])), days[-1])
@@ -449,21 +484,21 @@ def soc_steady(c, curve, load_wh, prof):
     return out
 
 
-def soc_series(c, curves, load_wh, prof, soc0):
+def soc_series(c, curves, load_wh, prof, soc0, ctls=None):
     cap = max(1.0, c["bank_wh"])
     e = max(0.0, min(c["usable_wh"], soc0 / 100.0 * cap - (cap - c["usable_wh"])))
     og = False
     out = []
-    for curve in curves:
+    for i, curve in enumerate(curves):
         sg = og
-        r, e, og = soc_run(c, curve, load_wh, prof, e, og)
+        r, e, og = soc_run(c, curve, load_wh, prof, e, og, ctls[i] if ctls else None)
         r["start_grid"] = sg
         out.append(r)
     return out
 
 
 def grid_times(r):
-    """→ (время перехода на сеть, время возврата на АКБ) или None."""
+    """→ (время перехода на сеть, время возврата на АКБ); нет события — None на его месте."""
     tg = next((t for t, k in r["events"] if k == "grid"), None)
     tb = next((t for t, k in r["events"] if k == "bat"), None)
     return tg, tb
@@ -502,7 +537,7 @@ def compute_all(s, sd):
     for m in range(12):
         lw = load_day_wh(c, m)
         for w in W_KEYS:
-            grid[(m, w)] = soc_steady(c, res[(m, w)]["curve"], lw, c["profile"])
+            grid[(m, w)] = soc_steady(c, res[(m, w)]["curve"], lw, c["profile"], res[(m, w)]["curve_ctl"])
     ygrid = {}
     for w in W_KEYS:
         ygrid[w] = dict(load=sum(grid[(m, w)]["load"] * DAYS[m] for m in range(12)) / 1000,

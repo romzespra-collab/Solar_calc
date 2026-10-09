@@ -1,7 +1,9 @@
-"""mod_checks.py  v1.9.0
+"""mod_checks.py  v1.9.7
 проверки схемы, проводов, MPPT, АКБ, инвертора
 
 Журнал:
+v1.9.7: гибрид + отдельные MPPT: проверка кабеля контроллер → АКБ (раньше не проверялся), заряд — «инвертор
+        до N А + отдельные MPPT до M А», упор в пределы — «инвертора и отдельных MPPT»; «цепочки» — по числу.
 v1.9.0: проверки каждого поля на своём входе MPPT / контроллере; полей больше, чем входов у инвертора, — ошибка.
 v1.7.0: разные сборки АКБ: состав банка, разная химия — ошибка, разное напряжение сборок — предупреждение.
 v1.5.1: АКБ задаются сборками — проверок «мало АКБ» и «лишние АКБ» больше нет.
@@ -51,7 +53,8 @@ def make_checks(s, c, res):
     if c["iin_max"] > 0 and isc_arr > c["iin_max"]:
         ch.append(("warn", f"Isc на вход {isc_arr:.1f} А > макс. входного тока MPPT {c['iin_max']:.0f} А — MPPT будет срезать."))
     if np_ >= 3:
-        ch.append(("warn", f"{np_} параллельных цепочки{per} — нужен предохранитель на каждую (обратный ток при КЗ)."))
+        ch.append(("warn", f"{np_} {plural(np_, 'параллельная цепочка', 'параллельные цепочки', 'параллельных цепочек')}{per}"
+                           f" — нужен предохранитель на каждую (обратный ток при КЗ)."))
     # другие поля: каждое на своём входе MPPT / своём контроллере
     for i, fc in enumerate(c["fields"][1:], 1):
         lvl, msg, n = field_status(fc, tmin, tmax)
@@ -76,7 +79,8 @@ def make_checks(s, c, res):
         if pv > 0:
             peak_w = max(res[(m, 'clear')]["peak"] for m in range(12))
             if clip_y > 0.01 * max(y, 1e-9):
-                ch.append(("warn", f"Упор в предел мощности PV инвертора {pv / 1000:g} кВт: теряется ≈{clip_y:.0f} кВт·ч/год ({clip_pct:.1f}%)."))
+                who = f"инвертора {pv / 1000:g} кВт" + (" и отдельных MPPT (их ток заряда)" if c["mixed"] else "")
+                ch.append(("warn", f"Упор в предел мощности PV {who}: теряется ≈{clip_y:.0f} кВт·ч/год ({clip_pct:.1f}%)."))
             else:
                 ch.append(("ok", f"Мощность PV: пик ≈{peak_w / 1000:.1f} кВт из {pv / 1000:g} кВт по паспорту инвертора."))
             if c["pstc_tot"] > 1.3 * pv:
@@ -142,9 +146,22 @@ def bat_checks(s, c, res, bal):
                         f"({i_inv * c['ri']:.2f} В, {i_inv ** 2 * c['ri']:.0f} Вт). Норма ≤ 1%."))
     ib = c["ilim"]
     if c["builtin"]:
-        who = "инвертор" if ib >= c["iout_tot"] else f"АКБ (до {c['bank_ich']:.0f} А)"
-        ch.append(("info", f"Заряд АКБ от солнца до {ib:.0f} А (ограничивает {who}); пока АКБ не берёт больше — "
-                           f"солнце идёт в дом, остальное пропадает."))
+        i_inv = c["pch_inv"] / c["vbat"]
+        i_ctl = sum(fc["iout"] for fc in c["fields"] if fc["ctl"])
+        if i_ctl:
+            ch.append(("info", f"Заряд АКБ от солнца: инвертор до {i_inv:.0f} А + отдельные MPPT до {i_ctl:.0f} А, "
+                               f"вместе до {ib:.0f} А (АКБ берёт до {c['bank_ich']:.0f} А); лишнее солнце инвертора пропадает."))
+            i1 = max(fc["iout"] for fc in c["fields"] if fc["ctl"])          # у каждого контроллера свой кабель
+            amp = ampacity(float(s["bw_s"]), s["bw_mat"])
+            dub = i1 * c["rb_ctl"] / c["vbat"] * 100
+            if i1 * 1.25 > amp:
+                ch.append(("err", f"Провод MPPT→АКБ {float(s['bw_s']):g} мм² держит ≈{amp:.0f} А, а ток отдельного MPPT до {i1:.0f} А."))
+            lvl = "ok" if dub <= 1 else "warn" if dub <= 2 else "err"
+            ch.append((lvl, f"Провод отдельного MPPT→АКБ: при {i1:.0f} А падение {dub:.2f}% ({i1 * c['rb_ctl']:.2f} В). Норма ≤ 1%."))
+        else:
+            who = "инвертор" if ib >= c["iout_tot"] else f"АКБ (до {c['bank_ich']:.0f} А)"
+            ch.append(("info", f"Заряд АКБ от солнца до {ib:.0f} А (ограничивает {who}); пока АКБ не берёт больше — "
+                               f"солнце идёт в дом, остальное пропадает."))
     else:
         dub = ib * c["rb"] / c["vbat"] * 100
         amp = ampacity(float(s["bw_s"]), s["bw_mat"])

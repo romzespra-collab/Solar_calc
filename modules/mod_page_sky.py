@@ -1,8 +1,10 @@
-"""mod_page_sky.py  v1.4.0
+"""mod_page_sky.py  v1.9.7
 Страницы «🌤 Погода» и «🌌 Небо» + опрос погоды. Всё согласовано со станцией: место и часовой пояс —
 из настроек, Солнце — та же формула, что в расчёте, прогноз выработки — тот же расчёт панелей/MPPT/АКБ.
 
 Журнал:
+v1.9.7: окно «Небо на весь экран» — одно на всё время (раньше каждое открытие создавало новое); сохранить картинку
+        без расширения — добавит .png.
 v1.4.0: первая версия — экран погоды и сцена неба из Smart_BMS 4.81, прогноз выработки по погоде
         на 6 дней (кВт·ч, заряд АКБ, переход на сеть), «сейчас по погоде», поиск города, полный экран.
 """
@@ -11,7 +13,7 @@ import urllib.error
 
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLineEdit, QMenu, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLineEdit, QMenu, QVBoxLayout, QWidget)
 
 from . import mod_astro as A
 from . import mod_forecast as F
@@ -21,7 +23,7 @@ from .mod_model import grid_times, fmt_t
 from .mod_sky import SkyView
 from .mod_theme import _OK, _ERR, _WARN, SERIES_COL
 from .mod_weather import MODELS, POLLS, fetch, geocode, wx_word, dow_word
-from .mod_widgets import (Chart, NoWheelCombo, Stepper, Toggle, _btn, _card, _fmt, _item, _lab, _save_failed,
+from .mod_widgets import (Chart, NoWheelCombo, Stepper, Toggle, _btn, _card, _fmt, _item, _lab, _save_failed, ask_save,
                           app_name, app_version, make_table)
 from .mod_wx_draw import WeatherPane
 
@@ -272,7 +274,7 @@ class SkyPages:
 
     def _sky_full(self):
         win = getattr(self, "_skywin", None)
-        if win is None or not win.isVisible():
+        if win is None:                                        # одно окно на всё время (не копить новые)
             self._skywin = win = SkyWindow(self._sky_snap, self)
             win.view.setContextMenuPolicy(Qt.CustomContextMenu)
             win.view.customContextMenuRequested.connect(lambda pos: self._sky_menu(win.view.mapToGlobal(pos), win))
@@ -305,8 +307,7 @@ class SkyPages:
         m.exec(gpos)
 
     def _save_pic(self, wdg, name):
-        fn, _ = QFileDialog.getSaveFileName(self, "Сохранить картинку", str(APP_ROOT / f"{name}.png"), "PNG (*.png)",
-                                            options=QFileDialog.DontUseNativeDialog)
+        fn = ask_save(self, "Сохранить картинку", str(APP_ROOT / f"{name}.png"), "PNG (*.png)")
         if not fn:
             return
         if wdg.grab().save(fn, "PNG"):

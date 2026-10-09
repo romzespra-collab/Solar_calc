@@ -1,7 +1,8 @@
-"""mod_page_results.py  v1.9.4
+"""mod_page_results.py  v1.9.7
 страницы «Прогноз», «Покрытие дома», «Горсеть», отчёт
 
 Журнал:
+v1.9.7: серия дней — заряд гибрида и отдельных MPPT раздельно (curve_ctl); экспорт CSV без расширения — добавит .csv.
 v1.9.4: погода «📍 Регион 5 лет»: карточка дня по региону, линия на графиках, год по региону в карточке «За год»;
         нет данных региона — «—» и подсказка (линии на графиках нет).
 v1.9.2: «Поле 1: …» — панели и мощность только поля 1 (раньше — всех полей); при нескольких полях — «всего …».
@@ -18,7 +19,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout, QGridLayout, QFileDialog
+from PySide6.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout, QGridLayout
 
 from .mod_base import MONTHS, MONTHS_S, DAYS, WEATHER, W_KEYS, WEATHER_ADJ, MONTHS_IN, log
 from .mod_equipment import CELL_INFO, INVERTER_PRESETS, MPPT_PRESETS
@@ -26,7 +27,7 @@ from .mod_sun import DT
 from .mod_fields import WIRE_S_KEYS, s2d
 from .mod_model import wire_r, sim_point, load_day_wh, soc_series, grid_times, fmt_t, LOSS_ROWS, bank_desc, layout_text
 from .mod_theme import _OK, _ERR, _WARN, SERIES_COL
-from .mod_widgets import (app_name, app_version, Segmented, Stepper, _lab, _card, _btn, _save_failed, _fmt,
+from .mod_widgets import (app_name, app_version, Segmented, Stepper, _lab, _card, _btn, _save_failed, _fmt, ask_save,
                           Chart, make_table, _item)
 
 
@@ -540,7 +541,8 @@ class ResultsPages:
         m = int(s["month"])
         w = s["ser_weather"]
         n = max(1, int(s["ser_days"]))
-        out = soc_series(c, [res[(m, w)]["curve"]] * n, load_day_wh(c, m), c["profile"], float(s["ser_soc0"]))
+        out = soc_series(c, [res[(m, w)]["curve"]] * n, load_day_wh(c, m), c["profile"], float(s["ser_soc0"]),
+                         [res[(m, w)]["curve_ctl"]] * n if res[(m, w)]["curve_ctl"] else None)
         xs, soc = [], []
         marks = [(24.0 * d, f"День {d + 1}", self._p()["muted"]) for d in range(1, n)]
         off = c["grid_mode"] == "off"
@@ -624,7 +626,7 @@ class ResultsPages:
         c = self.R["ctx"]
         G, Ta = float(self.s["pt_g"]), float(self.s["pt_t"])
         r = sim_point(c, G, Ta)
-        pot, soil, cell, mm, arr, pin, conv, out0, out, vin, I, vp, tc, R = r
+        pot, soil, cell, mm, arr, pin, conv, out0, out, vin, I, vp, tc, R = r[:14]
         du = I * R
         dup = du / vp * 100 if vp > 0 else 0
         mute = self._p()["muted"]
@@ -700,8 +702,7 @@ class ResultsPages:
     def export_months(self):
         if self.R is None:
             return
-        fn, _ = QFileDialog.getSaveFileName(self, "Экспорт CSV", str(Path(self._dir()) / "выработка_по_месяцам.csv"),
-                                            "CSV (*.csv)", options=QFileDialog.DontUseNativeDialog)
+        fn = ask_save(self, "Экспорт CSV", str(Path(self._dir()) / "выработка_по_месяцам.csv"), "CSV (*.csv)")
         if not fn:
             return
         res = self.R["res"]

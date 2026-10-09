@@ -31,10 +31,11 @@ import math
 
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QSize, QTimer
 from PySide6.QtGui import QPainter, QColor, QPen, QFont, QPainterPath, QRadialGradient, QGuiApplication, QFontMetrics
-from PySide6.QtWidgets import QWidget, QMenu, QFileDialog, QToolTip
+from PySide6.QtWidgets import QWidget, QMenu, QToolTip
 
 from .mod_base import APP_ROOT, log
 from .mod_theme import _OK, _WARN, _ERR
+from .mod_widgets import ask_save
 
 LVL = {"ok": _OK, "warn": _WARN, "err": _ERR}
 C_INV, C_BAT, C_PV, C_CTL, C_HOUSE, C_GRID, C_BUS = "#3ecf8e", "#46a8e0", "#e8b04a", "#b48cf0", "#3ecf8e", "#8a91a3", "#36c2d9"
@@ -753,8 +754,7 @@ class StationCanvas(QWidget):
         m.exec(self.mapToGlobal(pos))
 
     def _save(self):
-        fn, _ = QFileDialog.getSaveFileName(self, "Сохранить схему", str(APP_ROOT / "схема_станции.png"), "PNG (*.png)",
-                                            options=QFileDialog.DontUseNativeDialog)
+        fn = ask_save(self, "Сохранить схему", str(APP_ROOT / "схема_станции.png"), "PNG (*.png)")
         if fn:
             if self.grab().save(fn):
                 log.info(f"✓ Схема сохранена: {fn}")

@@ -1,8 +1,9 @@
-"""mod_region.py  v1.9.4
+"""mod_region.py  v1.9.7
 Погода «по региону»: реальная погода за последние 5 полных лет для точки станции (архив Open-Meteo, без ключа)
 → средний день каждого месяца по часам (солнце на горизонт, рассеянное, температура) и сумма солнца по годам.
 
 Журнал:
+v1.9.7: проверка сохранённых данных — в mod_config.profile_ok (строже: числа, без null).
 v1.9.4: первая версия.
 """
 
@@ -106,13 +107,3 @@ def fetch_region(lat, lon, ua="solar_calc"):
         log.warning(f"⚠ Погода региона: {last}" + (" — ещё попытка" if attempt == 0 else ""))
     raise RuntimeError(last)
 
-
-def region_ok(rg):
-    """Проверка сохранённых данных (config.json)."""
-    try:
-        float(rg["lat"]), float(rg["lon"])
-        return len(rg["months"]) == 12 and all(
-            len(m[k]) == 24 for m in rg["months"] for k in ("ghi", "dhi", "t")) and \
-            all(isinstance(m["H"], (int, float)) and isinstance(m["T"], (int, float)) for m in rg["months"])
-    except Exception:
-        return False

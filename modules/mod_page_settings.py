@@ -6,7 +6,8 @@ v1.9.7: исправлено: «🗑 Убрать» на боковой пане
         checked=False как номер); «⧉ Копия» открывала не копию; инвертор без MPPT ставил 1 контроллер при 2 полях
         (ложная ошибка), копия поля в этом режиме не добавляла контроллер; «занято k из N» у поля 1 не считало
         другие поля; при смене гибрида на гибрид с меньшим числом входов лишние поля не уходили на отдельный MPPT;
-        места узлов не сбрасываются, если поля не переносились. Убраны пустые подписи и мёртвые ветки.
+        места узлов не сбрасываются, если поля не переносились; страницы боковой панели — свой _side_page (окно
+        перекрывало _page и давало лишние отступы). Убраны пустые подписи и мёртвые ветки.
 v1.9.4: выбор погоды «📍 Регион 5 лет» — загрузка погоды региона, если её нет для точки станции.
 v1.9.3: добавлять — только правым кликом на схеме: кнопок «⧉ Копия поля», «＋ Другая сборка», «＋ Ещё сборка»
         в боковой панели больше нет.
@@ -156,7 +157,8 @@ class SettingsPage:
         return fr
 
     # ── страницы боковой панели ──
-    def _page(self):
+    def _side_page(self):
+        """Страница боковой панели конструктора (поля без отступов)."""
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 4, 0, 0)
@@ -189,7 +191,7 @@ class SettingsPage:
         return wdg
 
     def _pg_inv(self, name):
-        w, v = self._page()
+        w, v = self._side_page()
         self.pk_inv = PresetPicker(INVERTER_DB, "Свой инвертор — параметры в карточках ниже", series=INVERTER_SERIES,
                                    what="инвертор", vertical=True)
         self.pk_inv.changed.connect(lambda k: self._on_field("inv_preset", k))
@@ -208,7 +210,7 @@ class SettingsPage:
 
     def _pg_ctl0(self, name):
         """Отдельный MPPT (прибор) — у инвертора без своих MPPT: тип контроллера и сколько таких."""
-        w, v = self._page()
+        w, v = self._side_page()
         v.addWidget(self._cap("Отдельный MPPT-контроллер (прибор на линии АКБ → инвертор)"))
         self.pk_mppt = PresetPicker(MPPT_DB, "Свой контроллер — параметры в карточке «MPPT» ниже", what="контроллер",
                                     vertical=True)
@@ -228,7 +230,7 @@ class SettingsPage:
         return w
 
     def _pg_field0(self, name):
-        w, v = self._page()
+        w, v = self._side_page()
         self.pk_pan = PresetPicker(PANEL_DB, "Своя панель — паспорт ниже", series=PANEL_SERIES, what="панель", vertical=True)
         self.pk_pan.setToolTip("Производитель → серия → мощность; 🔎 — поиск по всей базе. Подставит паспорт")
         self.pk_pan.changed.connect(lambda k: self._on_field("p_preset", k))
@@ -258,7 +260,7 @@ class SettingsPage:
         return w
 
     def _pg_dyn(self, name):
-        w, v = self._page()
+        w, v = self._side_page()
         box = QVBoxLayout()
         box.setSpacing(6)
         v.addLayout(box)
@@ -267,7 +269,7 @@ class SettingsPage:
         return w
 
     def _pg_bat0(self, name):
-        w, v = self._page()
+        w, v = self._side_page()
         self.pk_bat = PresetPicker(BATTERY_DB, "Свои АКБ — параметры в карточке ниже", what="АКБ", vertical=True)
         self.pk_bat.changed.connect(lambda k: self._on_field("bat_preset", k))
         self.w["bat_preset"] = self.pk_bat
@@ -282,21 +284,21 @@ class SettingsPage:
         return w
 
     def _pg_house(self, name):
-        w, v = self._page()
+        w, v = self._side_page()
         for key in ("load_mode", "load_kwh", "load_winter", "load_profile"):
             self._dfield(v, key)
         v.addStretch(1)
         return w
 
     def _pg_grid(self, name):
-        w, v = self._page()
+        w, v = self._side_page()
         for key in ("grid_mode", "back_soc", "tariff"):
             self._dfield(v, key)
         v.addStretch(1)
         return w
 
     def _pg_cable(self, name):
-        w, v = self._page()
+        w, v = self._side_page()
         sa = QScrollArea()
         sa.setWidgetResizable(True)
         sa.setFrameShape(QFrame.NoFrame)

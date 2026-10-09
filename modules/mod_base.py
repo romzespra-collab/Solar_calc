@@ -1,7 +1,10 @@
-"""mod_base.py  v1.9.4
+"""mod_base.py  v1.9.7
 пути (APP_ROOT), календарь, лог (очередь для интерфейса + файл), фоновый Worker
 
 Журнал:
+v1.9.7: папка только для чтения (лог не открыть) — программа запускается (_fh = None); Worker: та же задача,
+        поданная во время работы, выполняется после неё с новыми данными (раньше терялась); ошибки задач — с
+        трассировкой в файле лога.
 v1.9.4: погода «📍 Регион 5 лет» (reg) — средний день по реальной погоде региона за 5 лет.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1 (программа была одним файлом); база оборудования
         «производитель → модель» (make_db, presets_of).
@@ -74,6 +77,7 @@ log.setLevel(logging.INFO)
 log.addHandler(_QueueHandler())
 
 
+_fh = None                               # файл лога (нет прав на папку — без него)
 try:
     _fh = logging.handlers.RotatingFileHandler(LOG_PATH, maxBytes=512_000, backupCount=1, encoding="utf-8")
     _fh.setFormatter(logging.Formatter("%(asctime)s  %(message)s", "%Y-%m-%d %H:%M:%S"))
@@ -89,12 +93,21 @@ class Worker(threading.Thread):
         super().__init__(daemon=True)
         self.jobs = queue.Queue()
         self.pending = set()
+        self.later = {}                       # та же задача подана, пока выполнялась: {имя: (fn, done)}
+        self.running = set()
+        self._lock = threading.Lock()
         self.start()
 
     def submit(self, name, fn, done):
-        if name in self.pending:
-            return False
-        self.pending.add(name)
+        """В очередь. Такая же задача уже ждёт — False; уже выполняется — выполнится ещё раз после неё
+        (с новыми данными), True."""
+        with self._lock:
+            if name in self.pending:
+                if name in self.running:
+                    self.later[name] = (fn, done)
+                    return True
+                return False
+            self.pending.add(name)
         self.jobs.put((name, fn, done))
         return True
 
@@ -102,13 +115,21 @@ class Worker(threading.Thread):
         while True:
             name, fn, done = self.jobs.get()
             UIQ.put(("busy", name))
+            with self._lock:
+                self.running.add(name)
             try:
                 res = fn()
                 UIQ.put(lambda r=res, d=done: d(r))
             except Exception as e:
-                log.error(f"✗ {name}: {e}")
+                log.error(f"✗ {name}: {e}", exc_info=True)       # трассировка — в файл лога
             finally:
-                self.pending.discard(name)
+                with self._lock:
+                    self.running.discard(name)
+                    nxt = self.later.pop(name, None)
+                    if nxt is None:
+                        self.pending.discard(name)
+                if nxt is not None:
+                    self.jobs.put((name,) + nxt)
                 UIQ.put(_DONE)
 
 

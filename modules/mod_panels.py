@@ -1,4 +1,4 @@
-"""mod_panels.py  v1.5.0
+"""mod_panels.py  v1.9.7
 База солнечных панелей: паспорт STC + температурные коэффициенты, «производитель → серия → мощность».
 Полная база — panels_db.tsv.gz рядом (CEC/NREL SAM 2026.7.3 — 21 тыс. моделей, 250+ производителей,
 + паспорта популярных серий, которых в CEC нет). Ниже — ручные паспорта (сверены с datasheet), они главнее
@@ -6,8 +6,9 @@
 «≈ не проверено» в описании — значения из каталога, не из паспорта.
 
 Журнал:
+v1.9.7: повреждённый (не обрезанный) panels_db.tsv.gz — zlib.error больше не валит запуск, остаются встроенные.
 v1.5.0: полная база из файла panels_db.tsv.gz (CEC + паспорта серий); серии (PANEL_SERIES) — для выбора
-        «производитель → серия → мощность»; поиск по базе (PANEL_FIND).
+        «производитель → серия → мощность»; поиск по базе (окно 🔎 FindDialog).
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; база «производитель → модель» (PANEL_DB):
         96 моделей — Jinko, LONGi, JA Solar, Trina, Canadian Solar, Risen, Astronergy, AIKO,
         Tongwei, DAH Solar, Huasun, Sunova, Yingli, Leapton, Ulica Solar, Abi-Solar, Q CELLS, REC,
@@ -17,6 +18,7 @@ v1.3.0: вынесено из solar_calc.pyw v1.2.1; база «производ
 import gc
 import gzip
 import re
+import zlib
 from pathlib import Path
 
 from .mod_base import log, presets_of
@@ -294,7 +296,7 @@ def _load_file():
                     continue
                 if p["pmax"] > 0:
                     out[key] = [brand, fam, ser, code, p, _info_file(tech, cells, bif, size, src, ct, wt, nk, noct)]
-    except (OSError, EOFError, ValueError) as e:
+    except (OSError, EOFError, ValueError, zlib.error) as e:
         log.warning(f"⚠ база панелей {DB_FILE.name} не прочитана ({e}) — только встроенные модели")
     return out
 

@@ -1,7 +1,10 @@
-"""mod_config.py  v1.9.6
+"""mod_config.py  v1.9.7
 параметры станции по умолчанию, config.json: загрузка, проверка, сохранение
 
 Журнал:
+v1.9.7: config.json с BOM (сохранён Блокнотом) читается (utf-8-sig); save_config → True/False; битый config
+        (Infinity, места узлов объектом, строки/null в данных PVGIS и погоды региона) больше не мешает запуску и
+        расчёту — неверное сбрасывается; night_share (нигде не используется) убран.
 v1.9.6: по умолчанию поля 1 и 2 (на MPPT инвертора) — 20°, точно на юг.
 v1.9.5: станция по умолчанию — станция пользователя: Краматорск, 15° юг; Axioma ISMPPT BFP 11000 (2 MPPT);
         2 поля по 9 × Risen RSM120-8-565BMDG (9S) на MPPT 1 и 2; отдельный MPPT 60 А / 150 В с 3 × Risen
@@ -33,7 +36,6 @@ from .mod_fields import ALL_FIELDS, INT_KEYS, WIRE_RANGE
 from .mod_model import bank_series
 from .mod_equipment import BATTERY_DB, MPPT_DB
 from .mod_panels import PANEL_DB
-from .mod_region import region_ok
 
 BAT_EXTRA_MAX = 5           # других сборок АКБ (кроме основной)
 PV_EXTRA_MAX = 11           # полей на других входах MPPT инвертора (входов до 12)
@@ -69,7 +71,7 @@ DEFAULT_SYS = dict(                                     # по умолчани�
     ctl_extra=[{'mppt': 'cn60', 'preset': 'risen_rsm1108525bmdg', 'ns': 3, 'np': 1, 'tilt': 15.0, 'aspect': 0.0}],
     cons_pos={}, bat_dod=90, bat_c=0.5, t_bat=15.0, bat_ch=56.8, eta_bat=97, inv_preset='axioma_ismpptbfp11000',
     inv_p=11000, inv_eta=91, inv_idle=75, inv_hours=24, inv_bat_v=48, load_mode='m', load_kwh=1000,
-    load_winter=30.0, night_share=50, load_profile='typ', grid_mode='off', back_soc=40.0, tariff=4.32,
+    load_winter=30.0, load_profile='typ', grid_mode='off', back_soc=40.0, tariff=4.32,
     ser_days=4.0, ser_weather='over', ser_soc0=100.0, t_min=-25.0, t_max=35.0, pt_g=100.0, pt_t=0.0, fc_soc0=70.0)
 
 
@@ -111,21 +113,21 @@ def clean_sys(d):
                 v = str(v)
                 if v not in (opt if isinstance(opt, dict) else dict(opt)):
                     continue
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         out[k] = v
     if "bat_packs" not in d and "bat_count" in d:          # config до v1.5.1: всего штук → сборок
         try:
             n = int(float(d["bat_count"])) // bank_series(out)[1]
             out["bat_packs"] = min(10, max(1, n))
-        except (TypeError, ValueError, KeyError):
+        except (TypeError, ValueError, KeyError, OverflowError, ZeroDivisionError):
             pass
     ex = []
     for it in d.get("bat_extra") if isinstance(d.get("bat_extra"), list) else []:
         try:
             if isinstance(it, dict) and str(it.get("preset")) in BATTERY_DB and len(ex) < BAT_EXTRA_MAX:
                 ex.append(dict(preset=str(it["preset"]), n=min(10, max(1, int(float(it.get("n", 1)))))))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             pass
     out["bat_extra"] = ex
     for key, mx, ctl in (("pv_extra", PV_EXTRA_MAX, False), ("ctl_extra", CTL_EXTRA_MAX, True)):
@@ -134,11 +136,11 @@ def clean_sys(d):
     pos = {}                                               # места узлов конструктора, переставленные мышью
     for k, v in (d.get("cons_pos") if isinstance(d.get("cons_pos"), dict) else {}).items():
         try:
-            if isinstance(k, str) and _POS_KEY.fullmatch(k) and len(v) == 2:
+            if isinstance(k, str) and _POS_KEY.fullmatch(k) and isinstance(v, (list, tuple)) and len(v) == 2:
                 x, y = float(v[0]), float(v[1])
                 if math.isfinite(x) and math.isfinite(y):
                     pos[k] = [int(min(max(x, 0), 4000)), int(min(max(y, 0), 4000))]
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             pass
     out["cons_pos"] = pos
     out["n_in"] = min(out["n_in"], out["n_mppt_max"])
@@ -146,14 +148,22 @@ def clean_sys(d):
     return out
 
 
-def _pv_ok(pv):
+def _num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def profile_ok(rg, keys):
+    """Солнце по месяцам (PVGIS / погода региона) из config.json: числа на месте и конечные — иначе сбросить."""
     try:
-        float(pv["lat"]), float(pv["lon"])
-        return len(pv["months"]) == 12 and all(
-            len(d[k]) == 24 for d in pv["months"] for k in ("ghi", "dhi", "gcs", "t")) and \
-            all(isinstance(d["H"], (int, float)) and isinstance(d["T"], (int, float)) for d in pv["months"])
+        return (_num(rg["lat"]) and _num(rg["lon"]) and len(rg["months"]) == 12
+                and all(isinstance(d, dict) and all(len(d[k]) == 24 and all(_num(x) for x in d[k]) for k in keys)
+                        and _num(d["H"]) and _num(d["T"]) and _num(d.get("shift", 0.0)) for d in rg["months"]))
     except Exception:
         return False
+
+
+def _pv_ok(pv):
+    return profile_ok(pv, ("ghi", "dhi", "gcs", "t"))
 
 
 def load_config():
@@ -161,7 +171,7 @@ def load_config():
     if not CONFIG_PATH.exists():
         return cfg
     try:
-        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
         if not isinstance(data, dict):
             raise ValueError("ожидался объект JSON")
     except Exception as e:
@@ -173,7 +183,11 @@ def load_config():
         log.warning(f"⚠ config.json испорчен ({e}) — сохранён как {bak.name}, настройки по умолчанию")
         return cfg
     cfg.update(data)
-    cfg["sys"] = clean_sys(data.get("sys"))
+    try:
+        cfg["sys"] = clean_sys(data.get("sys"))
+    except Exception as e:                                  # что-то не предусмотрели — не валить запуск
+        log.warning(f"⚠ Параметры станции в config.json не прочитались ({e}) — по умолчанию")
+        cfg["sys"] = dict(DEFAULT_SYS)
     try:
         cfg["builtin"] = [[float(r[0]), float(r[1])] for r in cfg["builtin"]]
         if len(cfg["builtin"]) != 12:
@@ -184,7 +198,7 @@ def load_config():
         log.warning("⚠ Данные PVGIS в config.json повреждены — сброшены, загрузите заново")
         cfg["pvgis"] = None
     cfg["use_pvgis"] = bool(cfg.get("use_pvgis", True))
-    if cfg.get("region") is not None and not region_ok(cfg["region"]):
+    if cfg.get("region") is not None and not profile_ok(cfg["region"], ("ghi", "dhi", "t")):
         log.warning("⚠ Погода региона в config.json повреждена — сброшена, загрузится заново")
         cfg["region"] = None
     for key, types in (("weather", {"on": bool, "model": str, "poll": int}), ("sky", {"names": bool, "stars": bool, "anim": bool})):
@@ -207,5 +221,7 @@ def save_config(cfg):
         tmp = CONFIG_PATH.with_name("config.json.tmp")
         tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, CONFIG_PATH)
+        return True
     except Exception as e:
         log.error(f"✗ Не удалось сохранить config.json: {e}")
+        return False
