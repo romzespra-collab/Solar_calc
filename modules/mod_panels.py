@@ -184,7 +184,7 @@ _CURATED = [
      "132 полуячеек N-type HJT (G12) · двусторонняя · 2384×1303×35 мм · 38.7 кг · NOCT 45°C · паспорт ✓"),
     ("sunova_ss44054mdht", "Sunova", "440 Вт · SS-440-54MDH(T) (Tangra S SS-54MDH)", _p(440, 33.48, 13.15, 39.03, 13.73, -0.3, -0.28, 45, 97.5),
      "108 полуячеек N-type TOPCon · 1722×1134×30 мм · 21.5 кг · NOCT 45°C · паспорт ✓"),
-    ("yingli_yl550d49e1500v12", "Yingli", "550 Вт · YL550D-49e 1500V 1/2 (YLM-J 3.0 PRO YL-D-49e)", _p(550, 42, 13.1, 49.82, 13.97, -0.35, -0.27, 45, 97),
+    ("yingli_yl550d49e1500v12", "Yingli", "550 Вт · YL550D-49e 1/2 (YLM-J 3.0 PRO)", _p(550, 42, 13.1, 49.82, 13.97, -0.35, -0.27, 45, 97),
      "144 полуячеек моно PERC (M10) · 2278×1134×30 мм · 28 кг · NOCT 45°C · паспорт ✓"),
     ("leapton_lp182182m54nb440w", "Leapton", "440 Вт · LP182*182-M-54-NB-440W (LP182*182-M-54-NB)", _p(440, 32.05, 13.73, 38.87, 14.27, -0.3, -0.25, 41, 97.5),
      "108 полуячеек N-type TOPCon · двусторонняя · 1722×1134×30 мм · 24 кг · NOCT 41°C · паспорт ✓"),
@@ -214,16 +214,16 @@ _CURATED = [
      "80 полуячеек N-type HJT (G12) · 1730×1118×30 мм · 21.5 кг · NMOT 44°C · паспорт ✓"),
     ("maxeon_sprmax6440", "Maxeon", "440 Вт · SPR-MAX6-440 (Maxeon 6)", _p(440, 40.49, 10.87, 48.21, 11.58, -0.29, -0.23, 43, 97.5),
      "66 N-type Maxeon Gen 6 IBC · 1872×1032×40 мм · 20.9 кг · NOCT 43°C · паспорт ✓"),
-    ("victron_spm040401200", "Victron", "40 Вт · SPM040401200 (BlueSolar Mono 12V series 4a)", _p(40, 18.3, 2.19, 22.45, 2.4, -0.45, -0.35, 45, 96),
-     "36 моно · 425×668×25 мм · 3.1 кг · NOCT 45°C · паспорт ✓"),
-    ("victron_spm040901200", "Victron", "90 Вт · SPM040901200 (BlueSolar Mono 12V series 4a)", _p(90, 19.6, 4.59, 24.06, 5.03, -0.45, -0.35, 45, 96),
-     "36 моно · 780×668×30 мм · 6.1 кг · NOCT 45°C · паспорт ✓"),
-    ("victron_spm041151200", "Victron", "115 Вт · SPM041151200 (BlueSolar Mono 12V series 4a)", _p(115, 19, 6.04, 23.32, 6.61, -0.45, -0.35, 45, 96),
-     "36 моно · 1015×668×30 мм · 8 кг · NOCT 45°C · паспорт ✓"),
-    ("victron_spm041501200", "Victron", "150 Вт · SPM041501200 (BlueSolar Mono 12V series 4a)", _p(150, 18.2, 8.25, 22.3, 8.69, -0.45, -0.35, 45, 96),
-     "36 моно · 1485×668×30 мм · 11 кг · NOCT 45°C · паспорт ✓"),
-    ("victron_spm041751200", "Victron", "175 Вт · SPM041751200 (BlueSolar Mono 12V series 4a)", _p(175, 19.4, 9.03, 23.7, 9.89, -0.45, -0.35, 45, 96),
-     "36 моно · 1485×668×30 мм · 11 кг · NOCT 45°C · паспорт ✓"),
+    ("victron_spm040401200", "Victron", "40 Вт · BlueSolar 40W-12V Mono (BlueSolar Monocrystalline series 4a)", _p(40, 18.3, 2.19, 22.45, 2.4, -0.45, -0.35, 45, 96),
+     "SPM040401200 · 36 моно · 425×668×25 мм · 3.1 кг · NOCT 45°C · паспорт ✓"),
+    ("victron_spm040901200", "Victron", "90 Вт · BlueSolar 90W-12V Mono (BlueSolar Monocrystalline series 4a)", _p(90, 19.6, 4.59, 24.06, 5.03, -0.45, -0.35, 45, 96),
+     "SPM040901200 · 36 моно · 780×668×30 мм · 6.1 кг · NOCT 45°C · паспорт ✓"),
+    ("victron_spm041151200", "Victron", "115 Вт · BlueSolar 115W-12V Mono (BlueSolar Monocrystalline series 4a)", _p(115, 19, 6.04, 23.32, 6.61, -0.45, -0.35, 45, 96),
+     "SPM041151200 · 36 моно · 1015×668×30 мм · 8 кг · NOCT 45°C · паспорт ✓"),
+    ("victron_spm041501200", "Victron", "150 Вт · BlueSolar 150W-12V Mono (BlueSolar Monocrystalline series 4a)", _p(150, 18.2, 8.25, 22.3, 8.69, -0.45, -0.35, 45, 96),
+     "SPM041501200 · 36 моно · 1485×668×30 мм · 11 кг · NOCT 45°C · паспорт ✓"),
+    ("victron_spm041751200", "Victron", "175 Вт · BlueSolar 175W-12V Mono (BlueSolar Monocrystalline series 4a)", _p(175, 19.4, 9.03, 23.7, 9.89, -0.45, -0.35, 45, 96),
+     "SPM041751200 · 36 моно · 1485×668×30 мм · 11 кг · NOCT 45°C · паспорт ✓"),
     ("axiomaenergy_ax200m", "Axioma Energy", "200 Вт · AX-200M (AX-M)", _p(200, 18.1, 11.05, 21.6, 11.87, -0.38, -0.3, 45, 97),
      "64 моно (2 parallel strings) · 1378×770×35 мм · 10.7 кг · NOCT 45°C · ≈ не проверено"),
 ]
@@ -306,9 +306,14 @@ def _build():
         if brand == TYPICAL:
             recs[key] = [brand, "", "Типовые панели", name, p, info]
             continue
-        m = re.match(r"\s*[\d.]+\s*Вт\s*·\s*(.+?)\s*(?:\((.+)\))?\s*$", name)
+        m = re.match(r"\s*[\d.]+\s*Вт\s*·\s*(.+?)(?:\s+\(([^()]*)\))?\s*$", name)
         code, fam = (m.group(1), m.group(2) or "") if m else (name, "")
-        old = recs.pop(_slug(brand) + "_" + _slug(code), None)          # та же модель из файла
+        old = None                                       # та же модель из файла: как есть / без «(…)», ±«W» в конце
+        for c in (code, re.sub(r"\([^)]*\)", "", code)):
+            base = _slug(brand) + "_" + _slug(c)
+            for k in (base, base + "w", base[:-1] if base.endswith("w") else None):
+                if old is None and k in recs:
+                    old = recs.pop(k)
         if old is not None:
             recs[key] = [brand, old[1] or fam, old[2], old[3], p, info]
         else:

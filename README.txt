@@ -46,12 +46,15 @@ solar_calc  v1.5.0
   • инвертор: модель, КПД, холостой ход, часы работы;
   • потребление дома за месяц или за год → баланс по месяцам, автономия АКБ.
 База оборудования (паспорта):
-  • панели — 21 тыс. моделей, 250+ производителей: база CEC/NREL (SAM 2026.7.3) — Jinko, LONGi,
+  • панели — 21,7 тыс. моделей, 260 производителей: база CEC/NREL (SAM 2026.7.3) — Jinko, LONGi,
     JA Solar, Trina, Canadian Solar, Risen, Astronergy, Q CELLS, REC, Yingli, Suntech, Talesun,
-    Seraphim, Phono, ZNShine, Waaree, First Solar, SunPower/Maxeon, LG и др. (вся линейка мощностей
-    каждой серии, старые поли тоже); + паспорта популярных у нас серий, которых в CEC нет
-    (Tiger Neo, Hi-MO 6/7/9/X10, DeepBlue 4.0, Vertex S+, AIKO, Tongwei, DAH, Huasun, Sunova,
-    Ulica, Abi-Solar, Victron 12 В, Axioma …) + типовые. Серия «RSM72-6-xxxP» — xxx = мощность;
+    Seraphim, Phono, ZNShine, Waaree, First Solar, SunPower/Maxeon, LG и др. — вся линейка мощностей
+    каждой серии, старые поли тоже; + 370 мощностей из паспортов серий, которых в CEC нет или мало:
+    Jinko Tiger Neo / Tiger Neo 3.0, LONGi Hi-MO 5m/6/X6/7/X10, JA DeepBlue 3.0/4.0, Trina Vertex
+    S/S+/N, Risen RSM108-9 / Hyper-ion / Titan S, Canadian TOPHiKu6/TOPBiHiKu6/7, Astronergy ASTRO N5/N7,
+    AIKO, Tongwei, DAH, Huasun, Sunova, Ulica, Leapton, Abi-Solar, Victron, Axioma + типовые.
+    Серия «RSM72-6-xxxP» — xxx = мощность. В описании модели: «паспорт ✓» / «база CEC» — откуда данные;
+    «как у …» или «≈ типовые» — температурного коэффициента в паспорте не было.
   • инверторы — 53 (41 гибрид со встроенным MPPT): Deye, Must, Axioma, Anern, Growatt, Luxpower,
     EASun, SRNE, PowMr, Voltronic Axpert, Solis, Sofar, Victron (MultiPlus/Phoenix/EasySolar);
   • MPPT-контроллеры — 30: Victron SmartSolar/BlueSolar, EPEver, SRNE, PowMr, Must, Renogy;
