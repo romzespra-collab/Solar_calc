@@ -1,7 +1,12 @@
-"""mod_page_settings.py  v1.9.1
+"""mod_page_settings.py  v1.9.2
 Страница «Настройки станции»: карточка «Моя станция» (что стоит), поля, пресеты, реакция на изменения.
 
 Журнал:
+v1.9.2: нет переключателя «встроенный / отдельный»: у гибрида (и своего инвертора) — свои входы MPPT, к ним
+        подключаются поля; отдельные MPPT — отдельные приборы на линии АКБ («＋ отдельный MPPT»), своя страница
+        у контроллера инвертора без MPPT. Старые настройки «гибрид + отдельный» переводятся сами: поле 1 — на вход
+        инвертора, полям без свободного входа — отдельный MPPT. Убрать можно и поле 1 / сборку 1 (их место
+        занимает следующее), и отдельный MPPT из меню.
 v1.9.1: узлы конструктора перетаскиваются мышью; места — в s["cons_pos"] (сохраняются в настройках и профиле),
         при удалении поля / сборки места следующих сдвигаются.
 v1.9.0: «Моя станция» — конструктор: шаги (инвертор → АКБ → поля → кабели → дом и сеть), холст со схемой
@@ -133,7 +138,8 @@ class SettingsPage:
         body.addWidget(side)
         v.addLayout(body)
         self.pages = {}
-        for name, fn in (("inv", self._pg_inv), ("field0", self._pg_field0), ("fx", self._pg_dyn), ("bat0", self._pg_bat0),
+        for name, fn in (("inv", self._pg_inv), ("ctl0", self._pg_ctl0), ("field0", self._pg_field0), ("fx", self._pg_dyn),
+                         ("bat0", self._pg_bat0),
                          ("bx", self._pg_dyn), ("house", self._pg_house), ("grid", self._pg_grid), ("cable", self._pg_cable)):
             w = fn(name)
             self.pages[name] = w
@@ -185,22 +191,32 @@ class SettingsPage:
         v.addWidget(self.pk_inv)
         self.lab_inv = self._hint()
         v.addWidget(self.lab_inv)
-        v.addWidget(self._cap("MPPT"))
-        self.seg_mppt = Segmented((("builtin", "Встроенный"), ("separate", "Отдельный")))
-        self.seg_mppt.setToolTip("Гибридный инвертор — MPPT встроен; к инвертору без MPPT нужен отдельный контроллер")
-        self.seg_mppt.changed.connect(lambda k: self._on_field("mppt_mode", k))
-        self.w["mppt_mode"] = self.seg_mppt
-        v.addWidget(self.seg_mppt)
-        self.pk_mppt = PresetPicker(MPPT_DB, "Свой контроллер — параметры ниже", what="контроллер", vertical=True)
+        self.lab_x2 = self._cap("Сколько входов MPPT у своего инвертора")
+        v.addWidget(self.lab_x2)
+        v.addWidget(self._count(1, 12, "n_mppt_max", "Сколько входов MPPT у своего инвертора"))
+        self.lab_mppt = self._hint()
+        v.addWidget(self.lab_mppt)
+        v.addStretch(1)
+        return w
+
+    def _pg_ctl0(self, name):
+        """Отдельный MPPT (прибор) — у инвертора без своих MPPT: тип контроллера и сколько таких."""
+        w, v = self._page()
+        v.addWidget(self._cap("Отдельный MPPT-контроллер (прибор на линии АКБ → инвертор)"))
+        self.pk_mppt = PresetPicker(MPPT_DB, "Свой контроллер — параметры в карточке «MPPT» ниже", what="контроллер",
+                                    vertical=True)
         self.pk_mppt.changed.connect(lambda k: self._on_field("m_preset", k))
         self.w["m_preset"] = self.pk_mppt
         v.addWidget(self.pk_mppt)
-        self.lab_x2 = self._cap("Сколько контроллеров / входов MPPT")
-        v.addWidget(self.lab_x2)
-        v.addWidget(self._count(1, 12, "n_mppt_max", "Сколько контроллеров (или входов MPPT у своего инвертора)"))
-        self.lab_mppt = self._hint()
-        v.addWidget(self.lab_mppt)
-        v.addWidget(self._hint())
+        v.addWidget(self._cap("Сколько таких контроллеров (у каждого своя цепочка панелей)"))
+        st = Stepper(1, 12, 1, 0, "шт")
+        st.setToolTip("Сколько одинаковых контроллеров — поле 1 делится между ними")
+        st.changed.connect(lambda val: self._on_field("n_mppt_max", val))
+        self.w2.setdefault("n_mppt_max", []).append(st)
+        self.st_nctl = st
+        v.addWidget(st)
+        self.lab_ctl0 = self._hint()
+        v.addWidget(self.lab_ctl0)
         v.addStretch(1)
         return w
 
@@ -321,18 +337,18 @@ class SettingsPage:
         c = make_ctx(s)
         if kind == "bat" and from_step:
             idx = 0
-        if kind == "ctl":                               # контроллер: свой (доп.) — страница поля; основной — инвертор/MPPT
-            fc = c["fields"][idx] if idx < len(c["fields"]) else None
-            kind = "field" if (fc is not None and (fc["ctl"] or idx > 0)) else "inv"
-            idx = idx if kind == "field" else 0
+        if kind == "ctl" and idx >= len(c["fields"]):
+            kind, idx = "inv", 0
         self.sel = (kind, idx)
         self.canvas.select(kind, idx)
-        step = {"inv": 0, "bat": 1, "field": 2, "cable_pv": 3, "cable_bus": 3, "cable_ctl": 3, "house": 4, "grid": 4}.get(kind)
+        step = {"inv": 0, "bat": 1, "field": 2, "ctl": 2, "cable_pv": 3, "cable_bus": 3, "cable_ctl": 3, "house": 4, "grid": 4}.get(kind)
         if step is not None:
             self.step_btns[step].setChecked(True)
         if kind == "inv":
             self.side_stack.setCurrentWidget(self.pages["inv"])
-        elif kind == "field":
+        elif kind == "ctl" and not c["fields"][idx]["ctl"]:      # контроллеры инвертора без MPPT (поле 1 и др.)
+            self.side_stack.setCurrentWidget(self.pages["ctl0"])
+        elif kind in ("field", "ctl"):
             if idx == 0:
                 self.side_stack.setCurrentWidget(self.pages["field0"])
             else:
@@ -446,11 +462,16 @@ class SettingsPage:
         if kind == "inv":
             title = "⚡ Инвертор"
             big = f"{c['inv_p'] / 1000:g} кВт · АКБ {s['bat_v']} В"
-        elif kind == "field" and idx < len(c["fields"]):
+        elif kind == "ctl" and idx < len(c["fields"]) and not c["fields"][idx]["ctl"]:
+            fc = c["fields"][idx]
+            md = MPPT_DB.get(s.get("m_preset"))
+            title = "🔀 Отдельный MPPT — прибор на линии АКБ"
+            big = f"{md[1] if md else 'свой контроллер'} × {int(s['n_mppt_max'])}"
+        elif kind in ("field", "ctl") and idx < len(c["fields"]):
             fc = c["fields"][idx]
             lvl, msg, n = field_status(fc, tmin, tmax)
             lab = field_label(c, idx)
-            title = f"☀ Поле {idx + 1} → {lab}"
+            title = (f"🔀 {lab} — прибор на линии АКБ, поле {idx + 1}" if kind == "ctl" else f"☀ Поле {idx + 1} → {lab}")
             big = f"<span style='color:{LVL_COL[lvl]}'>{fc['pstc_tot'] / 1000:.2f} кВт · {LVL_ICON[lvl]} {msg or 'в норме'}</span>"
             if idx > 0 and getattr(self, "fx_status", None) is not None:
                 try:
@@ -572,6 +593,8 @@ class SettingsPage:
             add_a=(f"поле → MPPT {port + 1}" if builtin and port < nports and len(s.get("pv_extra") or []) < PV_EXTRA_MAX else None),
             add_b=("отдельный MPPT" if len(s.get("ctl_extra") or []) < CTL_EXTRA_MAX else None),
             add_bat=len(s.get("bat_extra") or []) < BAT_EXTRA_MAX,
+            rm_main=bool(int(s["n_in"]) > 1 or s.get("pv_extra") or (s.get("ctl_extra") and not builtin)),
+            rm_bat0=bool(s.get("bat_extra")),
             house=dict(big=f"{c['load_month']:.0f} кВт·ч", lines=["в месяц · AC 230 В"] + ([f"закрыто станцией {cover:.0f}%"] if cover is not None else [])),
             grid=dict(big="сеть" if s.get("grid_mode") == "backup" else "нет сети", on=s.get("grid_mode") == "backup",
                       lines=[f"{float(s['tariff']):g} грн/кВт·ч"] + ([f"≈{grid_y:.0f} кВт·ч/год"] if grid_y is not None else [])),
@@ -643,16 +666,75 @@ class SettingsPage:
             self._cons_pick("field", idx)
 
     def _cons_remove(self, kind, idx):
-        if kind == "bat" and idx > 0:
-            self._pos_shift("bat", idx)
-            self._bat_extra_del(idx - 1)
+        s = self.s
+        if kind == "bat":
+            if idx > 0:
+                self._pos_shift("bat", idx)
+                self._bat_extra_del(idx - 1)
+            elif s.get("bat_extra"):                       # сборка 1: её место занимает следующая
+                ex = [dict(x) for x in s["bat_extra"]]
+                it = ex.pop(0)
+                self._pos_shift("bat", 0)
+                s["bat_extra"] = ex
+                self._set_widget("bat_preset", it["preset"])
+                self._on_field("bat_preset", it["preset"])
+                s["bat_packs"] = int(it["n"])
+                self._set_widget("bat_packs", s["bat_packs"])
+                self._bat_extra_changed()
+                log.info("🗑 Сборка 1 убрана — первой стала следующая")
+            else:
+                log.warning("⚠ Это единственная сборка АКБ — её можно поменять, но не убрать")
             self._cons_pick("bat", 0)
-        elif kind == "field" and idx > 0:
-            c = make_ctx(self.s)
-            k, j = self._fx_where(c, idx)
-            self._pos_shift("p" if k == "pv" else "c", j)
-            self._fx_del(k, j)
+        elif kind in ("field", "ctl"):
+            if idx > 0:
+                c = make_ctx(s)
+                k, j = self._fx_where(c, idx)
+                self._pos_shift("p" if k == "pv" else "c", j)
+                self._fx_del(k, j)
+            else:
+                self._remove_main()
             self._cons_pick("inv", 0)
+
+    def _remove_main(self):
+        """Убрать поле 1: на нескольких входах — на один вход меньше; иначе его место занимает следующее поле."""
+        s = self.s
+        if int(s["n_in"]) > 1:
+            s["n_in"] = int(s["n_in"]) - 1
+            s["n_pan"] = s["n_in"] * int(s["ns"]) * int(s["np"])
+            self._set_widget("n_pan", s["n_pan"])
+            self._refresh_station()
+            self._recalc_timer.start(200)
+            log.info(f"🗑 Поле 1 — на один вход меньше: {s['n_pan']} {plural(s['n_pan'], 'панель', 'панели', 'панелей')}")
+            return
+        builtin = s.get("mppt_mode") == "builtin"
+        src = "pv_extra" if s.get("pv_extra") else ("ctl_extra" if s.get("ctl_extra") and not builtin else None)
+        if not src:
+            log.warning("⚠ Поле 1 — единственное " + ("на входах инвертора" if builtin else "поле")
+                        + ": его можно поменять (панели, количество), но не убрать")
+            return
+        tag = "p" if src == "pv_extra" else "c"
+        old = dict(s.get("cons_pos") or {})
+        ex = [dict(x) for x in s[src]]
+        it = ex.pop(0)
+        s[src] = ex
+        self._pos_shift(tag, 0)
+        pos = {k: v for k, v in s["cons_pos"].items() if k not in ("field:m", "ctl:m")}
+        for node in ("field", "ctl"):
+            if f"{node}:{tag}0" in old:
+                pos[f"{node}:m"] = old[f"{node}:{tag}0"]
+        s["cons_pos"] = pos
+        for k, v in (("ns", int(it["ns"])), ("np", int(it["np"])), ("n_in", 1), ("tilt", float(it["tilt"])),
+                     ("aspect", float(it["aspect"]))):
+            s[k] = v
+            self._set_widget(k, v)
+        s["n_pan"] = s["ns"] * s["np"]
+        self._set_widget("n_pan", s["n_pan"])
+        if src == "ctl_extra" and it.get("mppt") != s.get("m_preset"):
+            self._set_widget("m_preset", it["mppt"])
+            self._on_field("m_preset", it["mppt"])
+        self._set_widget("p_preset", it["preset"])
+        self._on_field("p_preset", it["preset"])
+        log.info("🗑 Поле 1 убрано — первым стало следующее поле")
 
     def _fx_clone(self, idx):
         """Копия поля: основное → ещё одно такое же на следующий вход; другое — ещё такое же в свой список."""
@@ -665,8 +747,11 @@ class SettingsPage:
                 self._set_widget("n_pan", s["n_pan"])
                 self._refresh_station()
                 self._recalc_timer.start(200)
+            elif s.get("mppt_mode") == "builtin":
+                log.warning(f"⚠ У инвертора {inputs_word(int(s['n_mppt_max']))} — все заняты. Ещё поле — через "
+                            f"отдельный MPPT (＋ отдельный MPPT на схеме)")
             else:
-                self._cons_add("ctl" if s.get("mppt_mode") == "builtin" else "pv")
+                self._cons_add("pv")
             return
         kind, j = self._fx_where(c, idx)
         key = self._fx_key(kind)
@@ -994,6 +1079,8 @@ class SettingsPage:
                 for k, v in mp.items():
                     s[k] = v
                     self._set_widget(k, v)
+            if mode_changed:
+                self._overflow_to_ctl()
         else:
             pr = MPPT_PRESETS.get(s["m_preset"], (None, None))[1]
             if pr:
@@ -1006,6 +1093,29 @@ class SettingsPage:
                 s["n_mppt_max"] = 1
                 self._set_widget("n_mppt_max", 1)
         self._fit_layout()
+
+    def _overflow_to_ctl(self):
+        """Поля на входы инвертора: кому не хватило входа MPPT — на отдельный MPPT у линии АКБ (тот же контроллер)."""
+        s = self.s
+        n = int(s["n_mppt_max"])
+        ex = [dict(x) for x in s.get("pv_extra") or []]
+        keep = max(0, n - 1)                                   # основному полю — хотя бы один вход
+        if len(ex) <= keep:
+            return
+        ce = [dict(x) for x in s.get("ctl_extra") or []]
+        mp = s.get("m_preset") if s.get("m_preset") in MPPT_DB else "cn60"
+        moved = []
+        while len(ex) > keep and len(ce) < CTL_EXTRA_MAX:
+            it = ex.pop(keep)
+            ce.append(dict(it, mppt=mp))
+            moved.append(len(moved) + keep + 2)
+        s["pv_extra"], s["ctl_extra"] = ex, ce
+        s["cons_pos"] = {k: v for k, v in (s.get("cons_pos") or {}).items()
+                         if not k.split(":")[-1].startswith(("p", "c"))}   # номера сменились — места заново
+        if moved:
+            log.warning(f"⚠ У инвертора {inputs_word(n)} — " + ("поле " if len(moved) == 1 else "поля ")
+                        + ", ".join(map(str, moved)) + " подключены к отдельному MPPT на линии АКБ. Чтобы все поля "
+                        f"шли в инвертор, выберите модель с {n + len(moved)} входами MPPT")
 
     # ─────────────── схема (раскладка панелей) ───────────────
     def _layout_sig(self):
@@ -1097,18 +1207,19 @@ class SettingsPage:
         inv = s.get("inv_preset", "custom")
         custom_inv = inv not in INVERTER_DB
         hybrid = inv_is_hybrid(inv)
-        if builtin and not (hybrid or custom_inv):        # к инвертору без MPPT — только отдельный
-            s["mppt_mode"] = "separate"
-            self._set_widget("mppt_mode", "separate")
+        want = "builtin" if (hybrid or custom_inv) else "separate"   # свои MPPT — у гибрида; без MPPT — отдельные приборы
+        if s.get("mppt_mode") != want:
+            s["mppt_mode"] = want
+            self._set_widget("mppt_mode", want)
             self._apply_mppt_source(mode_changed=True)
-            builtin = False
-        self.seg_mppt.btns["builtin"].setEnabled(hybrid or custom_inv)
-        self.pk_mppt.setVisible(not builtin)
-        self.lab_x2.setVisible(not builtin)
+            builtin = want == "builtin"
+        self.lab_x2.setVisible(builtin and custom_inv)
         st = self.w["n_mppt_max"]
-        st.setVisible(not builtin or custom_inv)
-        st.reconfigure(1, 12, 1, 0, "шт" if not builtin else "вх. MPPT")
+        st.setVisible(builtin and custom_inv)
+        st.reconfigure(1, 12, 1, 0, "вх. MPPT")
         st.setValue(s["n_mppt_max"])
+        self.st_nctl.reconfigure(1, 12, 1, 0, "шт")
+        self.st_nctl.setValue(s["n_mppt_max"])
         card = self.cards.get("MPPT")
         if card is not None:
             card.setVisible(not builtin or custom_inv)
@@ -1155,18 +1266,21 @@ class SettingsPage:
         if builtin:
             n = int(s["n_mppt_max"])
             io, ii = float(s["iout_max"]), float(s["iin_max"])
-            t = (("Свой инвертор — параметры MPPT в карточке «MPPT инвертора». " if custom_inv else "Встроенный MPPT: ")
+            t = (("Свой инвертор — параметры MPPT в карточке «MPPT инвертора». " if custom_inv else "Свои MPPT инвертора: ")
                  + f"{inputs_word(n)}, окно {float(s['vmpp_min']):g}–{float(s['vmpp_max']):g} В, Voc ≤ {float(s['v_max']):g} В"
                  + (f", до {ii:g} А на каждый вход" if ii > 0 else "") + f", заряд до {io:g} А"
                  + f" · занято {inv_inputs_used(make_ctx(s))} из {n}")
         else:
             n = int(s["n_mppt_max"])
             io = float(s["iout_max"])
-            t = (f"Voc до {float(s['v_max']):g} В · заряд {io:g} А" + (f" × {n} = {io * n:g} А" if n > 1 else "")
-                 + f" · КПД {float(s['eta']):g}% · свой расход {float(s['own_w']):g} Вт")
+            t2 = (f"Voc до {float(s['v_max']):g} В · заряд {io:g} А" + (f" × {n} = {io * n:g} А" if n > 1 else "")
+                  + f" · КПД {float(s['eta']):g}% · свой расход {float(s['own_w']):g} Вт")
             md = MPPT_DB.get(s.get("m_preset"))
             if md and md[3]:
-                t += f" · {md[3]}"
+                t2 += f" · {md[3]}"
+            self.lab_ctl0.setText(t2)
+            t = ("У этого инвертора нет своих MPPT — панели подключаются через отдельные MPPT-контроллеры (приборы "
+                 "на линии АКБ → инвертор). Нажмите на контроллер на схеме, чтобы выбрать его")
         self.lab_mppt.setText(t)
         # АКБ: из ячеек / АКБ меньшего напряжения — «сборки», готовые на напряжение системы — «шт»
         nser = bank_series(s)[1]

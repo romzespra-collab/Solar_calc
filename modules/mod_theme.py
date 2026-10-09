@@ -1,7 +1,8 @@
-"""mod_theme.py  v1.9.0
+"""mod_theme.py  v1.9.2
 палитры тёмной/светлой темы и QSS для всех окон и диалогов
 
 Журнал:
+v1.9.2: боковая панель конструктора — фон темнее, поля ввода светлее и с рамкой (различимы в обеих темах).
 v1.9.0: конструктор станции — кнопки шагов (цвет по проверке), боковая панель настроек узла.
 v1.5.0: строки списка в окне поиска — с отступами.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1 (программа была одним файлом)
@@ -24,6 +25,9 @@ SERIES_COL = {"clear": "#f5b545", "avg": None, "over": "#8a91a3"}
 
 
 def _qss(p):
+    light = int(p["bg"][1:3], 16) > 128
+    inp = "#ffffff" if light else "#2f3440"               # поля ввода в боковой панели конструктора — светлее фона
+    inp_line = "#c9ced8" if light else "#454c5c"
     return f"""
 * {{ font-family: "Segoe UI"; font-size: 10pt; color: {p['text']}; }}
 QMainWindow, QWidget#root {{ background: {p['bg']}; }}
@@ -71,9 +75,13 @@ QPushButton#step[st="warn"] {{ border: 1px solid #f5b545; border-radius: 10px; }
 QPushButton#step[st="err"] {{ border: 1px solid #ff5d6c; border-radius: 10px; }}
 QPushButton#step[st="warn"]:checked {{ border: 2px solid #f5b545; border-radius: 10px; }}
 QPushButton#step[st="err"]:checked {{ border: 2px solid #ff5d6c; border-radius: 10px; }}
-QFrame#sidePanel {{ background: {p['panel2']}; border: 1px solid {p['line']}; border-radius: 10px; }}
+QFrame#sidePanel {{ background: {p['bg']}; border: 1px solid {p['line']}; border-radius: 10px; }}
 QFrame#sidePanel QStackedWidget, QFrame#sidePanel QStackedWidget > QWidget, QFrame#sidePanel QScrollArea,
-QFrame#sidePanel QScrollArea > QWidget > QWidget {{ background: {p['panel2']}; }}
+QFrame#sidePanel QScrollArea > QWidget > QWidget {{ background: {p['bg']}; }}
+QFrame#sidePanel QComboBox, QFrame#sidePanel QLineEdit, QFrame#sidePanel QAbstractSpinBox,
+QFrame#sidePanel QPushButton {{ background: {inp}; border: 1px solid {inp_line}; }}
+QFrame#sidePanel QComboBox:hover, QFrame#sidePanel QAbstractSpinBox:hover, QFrame#sidePanel QPushButton:hover {{ border-color: {p['accent']}; }}
+QFrame#sidePanel QPushButton#seg:checked {{ background: {p['accent']}; color: #ffffff; border-color: {p['accent']}; }}
 QLabel#sideTitle {{ color: {p['muted']}; font-size: 9pt; font-weight: 600; text-transform: uppercase; }}
 QLabel#sideBig {{ font-size: 13pt; font-weight: 700; }}
 QPushButton#seg {{ border-radius: 0; padding: 5px 10px; margin: 0; }}

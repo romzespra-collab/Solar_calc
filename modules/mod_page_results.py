@@ -1,7 +1,8 @@
-"""mod_page_results.py  v1.8.0
+"""mod_page_results.py  v1.9.2
 страницы «Прогноз», «Покрытие дома», «Горсеть», отчёт
 
 Журнал:
+v1.9.2: «Поле 1: …» — панели и мощность только поля 1 (раньше — всех полей); при нескольких полях — «всего …».
 v1.8.0: «Поле: … · 2 входа MPPT × по 9 панелей (9 посл. × 1 пар.)» — сколько панелей на каждый вход.
 v1.7.0: банк из разных сборок: состав «16S1P LF280K + 16S2P LF105», вес по всем сборкам, в отчёте — состав.
 v1.5.1: АКБ сборками: «4 сборки × 16 последовательно = 64 шт»; совет «докупить» — в сборках.
@@ -200,11 +201,13 @@ class ResultsPages:
         m = int(s["month"])
         wsel = s["weather"]
         self.src_lab.setText("Солнце: " + self.sd.label(float(s["lat"]), float(s["lon"])))
-        pk = c["pstc_tot"]
+        pk = c["pstc_tot"]                                  # все поля
         lay = layout_text(c["k"], c["ns"], c["np"], not c["builtin"])
-        self.lab_total.setText(f"Поле: {c['npan']} панелей × {c['pmax']:.0f} Вт = {pk / 1000:.2f} кВт · {lay} · "
+        nf = len(c["fields"])
+        self.lab_total.setText(f"Поле 1: {c['main_npan']} панелей × {c['pmax']:.0f} Вт = {c['main_pstc'] / 1000:.2f} кВт · {lay} · "
                                f"цепочка Vmp {c['ns'] * c['vmp']:.1f} В / Voc {c['ns'] * c['voc']:.1f} В · "
-                               f"ток {c['np'] * c['imp']:.1f} А на вход")
+                               f"ток {c['np'] * c['imp']:.1f} А на вход"
+                               + (f" · всего {nf} поля: {c['npan']} панелей, {c['pstc_tot'] / 1000:.2f} кВт" if nf > 1 else ""))
         for w in W_KEYS:
             d = res[(m, w)]
             val, sub = self.kpi[w]
@@ -642,7 +645,8 @@ class ResultsPages:
         c, res = R["ctx"], R["res"]
         m = int(s["month"])
         L = [f"{app_name()} v{app_version()} — отчёт",
-             f"Поле: {c['npan']} шт = {(str(c['k']) + '×') if c['k'] > 1 else ''}{c['ns']}S{c['np']}P × {c['pmax']:.0f} Вт = {c['pstc_tot'] / 1000:.2f} кВт; угол {s['tilt']}°, азимут {s['aspect']}°",
+             f"Поле 1: {c['main_npan']} шт = {(str(c['k']) + '×') if c['k'] > 1 else ''}{c['ns']}S{c['np']}P × {c['pmax']:.0f} Вт = {c['main_pstc'] / 1000:.2f} кВт; угол {s['tilt']}°, азимут {s['aspect']}°"
+             + (f"; всего полей {len(c['fields'])}: {c['npan']} шт, {c['pstc_tot'] / 1000:.2f} кВт" if len(c["fields"]) > 1 else ""),
              f"Провод: {s['wire_len']} м, {s['wire_s']} мм² {'Al' if s['wire_mat'] == 'al' else 'Cu'}, R линии {wire_r(c, 20) * 1000:.0f} мОм",
              (f"MPPT встроен в инвертор ({INVERTER_PRESETS.get(s['inv_preset'], ('свой',))[0]}): {s['n_in']} вх. из {s['n_mppt_max']}, "
               f"окно {s['vmpp_min']}–{s['vmpp_max']} В, заряд до {s['iout_max']} А" if c["builtin"] else

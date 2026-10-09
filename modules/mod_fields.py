@@ -1,7 +1,8 @@
-"""mod_fields.py  v1.8.0
+"""mod_fields.py  v1.9.2
 Описание полей настроек: подписи, пределы, подсказки (без Qt).
 
 Журнал:
+v1.9.2: MPPT_MODES — «есть свои MPPT» / «нет MPPT» (переключателя в окне больше нет — решает тип инвертора).
 v1.8.0: «Провода» — простые подписи: кабель от панелей до инвертора (длина, сечение, материал, разъёмы),
         кабель АКБ → инвертор; что «+» и «−» учитываются сами.
 v1.5.1: АКБ — «сборок» 1–10 (bat_packs) вместо «всего штук» (bat_count).
@@ -16,7 +17,7 @@ import math
 from .mod_panels import PANEL_PRESETS
 from .mod_equipment import MPPT_PRESETS, LOAD_PROFILES, INVERTER_PRESETS, BATTERY_PRESETS, CONTACT_ITEMS
 
-MPPT_MODES = (("builtin", "Встроенный в инвертор"), ("separate", "Отдельный контроллер"))
+MPPT_MODES = (("builtin", "Есть свои MPPT"), ("separate", "Нет MPPT"))
 
 # «Моя станция» — главный выбор; рисуется отдельной карточкой (mod_page_settings._station_card)
 STATION_FIELDS = [
@@ -26,7 +27,7 @@ STATION_FIELDS = [
     ("ns", "Последовательно", "num", (1, 40, 1, 0, "шт"), "Панелей в цепочке"),
     ("np", "Параллельно", "num", (1, 30, 1, 0, "цеп."), "Цепочек параллельно на один вход"),
     ("inv_preset", "Инвертор", "combo", INVERTER_PRESETS, "Производитель и модель инвертора"),
-    ("mppt_mode", "MPPT", "seg", MPPT_MODES, "Гибридный инвертор — MPPT встроен; иначе нужен отдельный контроллер"),
+    ("mppt_mode", "MPPT", "seg", MPPT_MODES, "У гибрида свои входы MPPT — панели подключаются к ним; у инвертора без MPPT — только через отдельные MPPT (приборы)"),
     ("m_preset", "Контроллер MPPT", "combo", MPPT_PRESETS, "Отдельный MPPT-контроллер"),
     ("n_mppt_max", "Входов / контроллеров", "num", (1, 12, 1, 0, "шт"), "Сколько входов MPPT у инвертора или сколько контроллеров"),
     ("bat_preset", "АКБ", "combo", BATTERY_PRESETS, "Тип аккумуляторов"),
