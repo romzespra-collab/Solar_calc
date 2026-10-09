@@ -1,7 +1,8 @@
-"""mod_fields.py  v1.9.2
+"""mod_fields.py  v1.9.7
 Описание полей настроек: подписи, пределы, подсказки (без Qt).
 
 Журнал:
+v1.9.7: убран неиспользуемый MPPT_BUILTIN_KEYS.
 v1.9.2: MPPT_MODES — «есть свои MPPT» / «нет MPPT» (переключателя в окне больше нет — решает тип инвертора).
 v1.8.0: «Провода» — простые подписи: кабель от панелей до инвертора (длина, сечение, материал, разъёмы),
         кабель АКБ → инвертор; что «+» и «−» учитываются сами.
@@ -140,7 +141,6 @@ INPUT_CARDS = [
 ]
 PANEL_KEYS = ("pmax", "vmp", "imp", "voc", "isc", "gamma", "bvoc", "noct", "lowlight")
 MPPT_KEYS = ("v_max", "vmpp_min", "vmpp_max", "iin_max", "iout_max", "eta", "eta_k", "own_w", "headroom")
-MPPT_BUILTIN_KEYS = MPPT_KEYS + ("pv_pmax", "n_mppt_max")
 INT_KEYS = ("ns", "np", "n_main", "month", "bat_packs", "inv_hours", "n_pan", "n_in", "n_mppt_max")
 BAT_KEYS = ("chem", "bat_unit_v", "bat_ah", "bat_c", "bat_dod")
 INV_KEYS = ("inv_p", "inv_eta", "inv_idle")

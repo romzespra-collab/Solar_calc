@@ -1,7 +1,9 @@
-"""mod_widgets.py  v1.9.0
+"""mod_widgets.py  v1.9.7
 виджеты Qt: Toggle, Segmented, Stepper, график Chart, таблицы с меню
 
 Журнал:
+v1.9.7: _btn вызывает слот без аргумента checked (он попадал в lambda x=… и ломал «🗑 Убрать»); Toggle рисует
+        ручку своим цветом; убрана пустая _menu_style.
 v1.9.0: PresetPicker(vertical=True) — поля друг под другом (боковая панель конструктора).
 v1.7.0: PresetPicker: поля не длиннее нужного (производитель ≤200, серия ≤330, модель ≤300/360 px);
         allow_custom=False — без «Своё» (для дополнительных сборок АКБ); extra_menu — свои пункты меню.
@@ -55,7 +57,7 @@ class Toggle(QAbstractButton):
         pa.setPen(Qt.NoPen)
         pa.setBrush(self._on if self.isChecked() else self._off)
         pa.drawRoundedRect(0, 0, 40, 22, 11, 11)
-        pa.setBrush(QColor("#ffffff"))
+        pa.setBrush(self._knob)
         pa.drawEllipse(21 if self.isChecked() else 3, 3, 16, 16)
 
 
@@ -476,12 +478,8 @@ def _btn(text, name=None, tip=None, slot=None):
         b.setToolTip(tip)
     b.setCursor(Qt.PointingHandCursor)
     if slot:
-        b.clicked.connect(slot)
+        b.clicked.connect(lambda _=False, f=slot: f())        # без checked: иначе он попадёт в lambda x=... слота
     return b
-
-
-def _menu_style(menu):
-    return menu
 
 
 def _save_failed(parent, fn, e):

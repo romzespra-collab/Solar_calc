@@ -1,7 +1,8 @@
-"""mod_page_tools.py  v1.9.4
+"""mod_page_tools.py  v1.9.7
 страницы «Схемы S×P», «Угол», «Провод», «Данные PVGIS», «Цвета»
 
 Журнал:
+v1.9.7: «Провода» → MPPT → АКБ у гибрида с отдельным MPPT: сопротивление и ток отдельного контроллера (было 0).
 v1.9.4: «Данные солнца» — погода региона за 5 лет (архив Open-Meteo): загрузить / забыть, сумма солнца по
         годам, колонки в таблице; загрузка сама при выборе погоды «📍 Регион 5 лет».
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; сравнение схем — с разбивкой по входам MPPT / контроллерам.
@@ -242,7 +243,7 @@ class ToolPages:
             self.recalc()
 
     def _job_wire(self, s, sd, seg="pv"):
-        name, kl, ks, km, secs, ok_lim, warn_lim = self.WIRE_SEGS[seg]
+        kl, ks, km, secs = self.WIRE_SEGS[seg][1:5]
         tiny = dict(s, **{kl: 0.0001})
         if seg == "pv":
             tiny.update(contact="good", n_main=0)
@@ -266,7 +267,12 @@ class ToolPages:
                 need = c["np"] * c["isc"] * 1.25
                 yl = y0 - year_kwh(res)
             elif seg == "bw":
-                R, I, V = c["rb"], c["ilim"], c["vbat"]
+                if c["builtin"]:                            # гибрид: этот кабель — у отдельных MPPT (у каждого свой)
+                    R = c["rb_ctl"]
+                    I = max([fc["iout"] for fc in c["fields"] if fc["ctl"]] or [0.0])
+                else:
+                    R, I = c["rb"], c["ilim"]
+                V = c["vbat"]
                 need = I * 1.25
                 yl = y0 - year_kwh(res)
             else:

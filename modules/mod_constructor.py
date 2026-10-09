@@ -1,4 +1,4 @@
-"""mod_constructor.py  v1.9.5
+"""mod_constructor.py  v1.9.7
 Конструктор станции — холст: во главе инвертор; слева поля панелей на его входах MPPT; от инвертора вниз —
 линия к шине АКБ, к этой линии сбоку подключены отдельные MPPT-контроллеры со своими полями; внизу — сборки
 АКБ на шине; справа — дом и сеть. Линии «живые» (зигзаг с бегущими точками), цвет — проверка (✓ ⚠ ✗).
@@ -6,6 +6,8 @@
 запоминается); добавить / убрать / копия — правый клик (меню).
 
 Журнал:
+v1.9.7: исправлено: узлы впритык (линия из одной точки) — схема больше не падает при каждой перерисовке;
+        потянуть подпись кабеля — ошибка и потерянный клик; убраны мёртвые ветки «＋»-узлов и пунктирных узлов.
 v1.9.5: раскладка по умолчанию — точно как у пользователя: поля инвертора справа налево (поле 1 / MPPT 1 —
         справа, рядом с отдельными MPPT; поле 2 / MPPT 2 — левее), дом и АКБ — на одной высоте под инвертором.
 v1.9.4: раскладка по умолчанию: сверху — поля на входах MPPT над инвертором (слева направо), правее — отдельные
@@ -141,7 +143,7 @@ class StationCanvas(QWidget):
                 x, y = samples[i]
                 p.drawEllipse(QPointF(x, y), 2.2, 2.2)
 
-    def _node(self, p, r, icon, big, lines, border, kind, idx, tip="", dashed=False, big_col=None, badge=None, key=None):
+    def _node(self, p, r, icon, big, lines, border, kind, idx, tip="", big_col=None, badge=None, key=None):
         sel = self.sel == (kind, idx)
         hov = self.hover == (kind, idx)
         if sel:
@@ -153,17 +155,17 @@ class StationCanvas(QWidget):
             p.setPen(Qt.NoPen)
             p.setBrush(g)
             p.drawRoundedRect(r.adjusted(-14, -14, 14, 14), 20, 20)
-        p.setBrush(QColor(self._c("card")) if not dashed else Qt.NoBrush)
+        p.setBrush(QColor(self._c("card")))
         bc = QColor(border)
         if hov and not sel:
             bc = bc.lighter(130)
-        p.setPen(QPen(bc, 2.8 if sel else (2.0 if hov else 1.5), Qt.DashLine if dashed else Qt.SolidLine))
+        p.setPen(QPen(bc, 2.8 if sel else (2.0 if hov else 1.5)))
         p.drawRoundedRect(r, 12, 12)
         y = r.top() + 6
         f = QFont(self.font())
         f.setPointSize(14)
         p.setFont(f)
-        p.setPen(QColor(self._c("text") if not dashed else self._c("muted")))
+        p.setPen(QColor(self._c("text")))
         p.drawText(QRectF(r.left(), y, r.width(), 24), Qt.AlignCenter, icon)
         y += 24
         if badge:
@@ -181,7 +183,7 @@ class StationCanvas(QWidget):
         fbig.setPointSize(13)
         fbig.setBold(True)
         p.setFont(fbig)
-        p.setPen(QColor(big_col or self._c("text")) if not dashed else QColor(self._c("muted")))
+        p.setPen(QColor(big_col or self._c("text")))
         fm = QFontMetrics(fbig)
         p.drawText(QRectF(r.left() + 4, y, r.width() - 8, 24), Qt.AlignCenter,
                    fm.elidedText(big, Qt.ElideRight, int(r.width() - 10)))
@@ -348,6 +350,8 @@ class StationCanvas(QWidget):
                     out[-1] = pt                                   # на одной прямой — без лишнего колена
                     continue
             out.append(pt)
+        if len(out) < 2:                                           # узлы впритык — линия из одной точки
+            out = [pts[0], pts[-1]] if len(pts) >= 2 else (pts * 2)[:2]
         return out
 
     @staticmethod
@@ -396,6 +400,8 @@ class StationCanvas(QWidget):
     @staticmethod
     def _end_side(pts):
         """С какой стороны линия входит в приёмник: l / r / t / b (по последнему отрезку)."""
+        if len(pts) < 2:
+            return "l"
         (x0, y0), (x1, y1) = pts[-2], pts[-1]
         if abs(x1 - x0) < 1:
             return "t" if y0 < y1 else "b"
@@ -563,9 +569,9 @@ class StationCanvas(QWidget):
             else:
                 beside.append((cy, b))
         tys = {}
-        for i, (dist, cy, b) in enumerate(sorted(above, key=lambda t: t[:2])):   # ближний — выше, дальний — ниже
+        for i, (_d, _cy, b) in enumerate(sorted(above, key=lambda t: t[:2])):   # ближний — выше, дальний — ниже
             tys[b["key"]] = ("v", min(t1, t0 + 12 + 14 * i))
-        for i, (dist, cy, b) in enumerate(sorted(below, key=lambda t: t[:2])):   # ближний — ниже, дальний — выше
+        for i, (_d, _cy, b) in enumerate(sorted(below, key=lambda t: t[:2])):   # ближний — ниже, дальний — выше
             tys[b["key"]] = ("v", max(t0, t1 - 12 - 14 * i))
         last = -1e9
         for cy, b in sorted(beside, key=lambda t: t[0]):            # сбоку — прямо на своей высоте, не ближе 14 px
@@ -642,7 +648,7 @@ class StationCanvas(QWidget):
 
     def mouseMoveEvent(self, e):
         pt = e.position()
-        if self.press and e.buttons() & Qt.LeftButton:
+        if self.press and self.press[1] and e.buttons() & Qt.LeftButton:      # тащить можно только узел
             p0, key, kind, idx, tl = self.press
             dx, dy = pt.x() - p0.x(), pt.y() - p0.y()
             if not self.dragging and abs(dx) + abs(dy) > 5:
@@ -698,9 +704,6 @@ class StationCanvas(QWidget):
             self.setCursor(Qt.OpenHandCursor)
             self.moved.emit({k: [round(v[0]), round(v[1])] for k, v in self.pos.items()})
             return
-        if kind.startswith("add_"):
-            self.add.emit(kind[4:])
-            return
         self.select(kind, idx)
         self.picked.emit(kind, idx)
 
@@ -719,19 +722,18 @@ class StationCanvas(QWidget):
         m = QMenu(self)
         if h:
             kind, idx, _, key = h
-            if not kind.startswith("add_"):
-                m.addAction("⚙ Настроить", lambda: (self.select(kind, idx), self.picked.emit(kind, idx)))
-                if kind in ("field", "ctl"):
-                    what = "поле" if kind == "field" else "MPPT с его полем"
-                    m.addAction(f"⧉ Копия ({'ещё такое же поле' if kind == 'field' else 'ещё такой же MPPT с полем'})",
-                                lambda: self.clone.emit("field", idx))
-                    ok = idx > 0 or bool(d.get("rm_main"))
-                    a = m.addAction(f"🗑 Убрать {what}" if ok else "🗑 Убрать — это единственное поле", lambda: self.remove.emit("field", idx))
-                    a.setEnabled(ok)
-                if kind == "bat":
-                    ok = idx > 0 or bool(d.get("rm_bat0"))
-                    a = m.addAction("🗑 Убрать сборку" if ok else "🗑 Убрать — это единственная сборка", lambda: self.remove.emit("bat", idx))
-                    a.setEnabled(ok)
+            m.addAction("⚙ Настроить", lambda: (self.select(kind, idx), self.picked.emit(kind, idx)))
+            if kind in ("field", "ctl"):
+                what = "поле" if kind == "field" else "MPPT с его полем"
+                m.addAction(f"⧉ Копия ({'ещё такое же поле' if kind == 'field' else 'ещё такой же MPPT с полем'})",
+                            lambda: self.clone.emit("field", idx))
+                ok = idx > 0 or bool(d.get("rm_main"))
+                a = m.addAction(f"🗑 Убрать {what}" if ok else "🗑 Убрать — это единственное поле", lambda: self.remove.emit("field", idx))
+                a.setEnabled(ok)
+            if kind == "bat":
+                ok = idx > 0 or bool(d.get("rm_bat0"))
+                a = m.addAction("🗑 Убрать сборку" if ok else "🗑 Убрать — это единственная сборка", lambda: self.remove.emit("bat", idx))
+                a.setEnabled(ok)
             if key:
                 a = m.addAction("↺ Вернуть на место", lambda: self._reset(key))
                 a.setEnabled(key in self.pos)

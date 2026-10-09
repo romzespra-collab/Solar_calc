@@ -1,7 +1,8 @@
-"""solar_calc_qt.py  v1.9.4
+"""solar_calc_qt.py  v1.9.7
 Главное окно программы (PySide6): боковая панель, страницы, лог, статус.
 
 Журнал:
+v1.9.7: ручка переключателей — белая в обеих темах (цвет передаётся явно).
 v1.9.4: погода «📍 Регион 5 лет»: выбрана, а данных для точки нет — загрузка сама (один раз на точку).
 v1.9.0: тема и итог расчёта обновляют холст конструктора станции.
 v1.5.0: без изменений окна — версия поднята вместе с программой (база панелей, выбор серии, поиск).
@@ -267,7 +268,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
         app.setStyleSheet(_qss(p))
         off = "#454b59" if self.cfg.get("theme", "dark") == "dark" else "#c3c8d2"
         for t in self.toggles:
-            t.set_theme(p["accent"], off, p["text"])
+            t.set_theme(p["accent"], off, "#ffffff")        # ручка — белая в обеих темах
         for c in self.charts:
             c.set_theme(p)
         if hasattr(self, "wxpane"):

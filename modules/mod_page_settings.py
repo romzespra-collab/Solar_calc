@@ -1,7 +1,12 @@
-"""mod_page_settings.py  v1.9.4
+"""mod_page_settings.py  v1.9.7
 Страница «Настройки станции»: карточка «Моя станция» (что стоит), поля, пресеты, реакция на изменения.
 
 Журнал:
+v1.9.7: исправлено: «🗑 Убрать» на боковой панели убирал поле 1 / сборку 1 вместо выбранного (кнопка передавала
+        checked=False как номер); «⧉ Копия» открывала не копию; инвертор без MPPT ставил 1 контроллер при 2 полях
+        (ложная ошибка), копия поля в этом режиме не добавляла контроллер; «занято k из N» у поля 1 не считало
+        другие поля; при смене гибрида на гибрид с меньшим числом входов лишние поля не уходили на отдельный MPPT;
+        места узлов не сбрасываются, если поля не переносились. Убраны пустые подписи и мёртвые ветки.
 v1.9.4: выбор погоды «📍 Регион 5 лет» — загрузка погоды региона, если её нет для точки станции.
 v1.9.3: добавлять — только правым кликом на схеме: кнопок «⧉ Копия поля», «＋ Другая сборка», «＋ Ещё сборка»
         в боковой панели больше нет.
@@ -148,7 +153,6 @@ class SettingsPage:
             self.pages[name] = w
             self.side_stack.addWidget(w)
         self.sel = ("inv", 0)
-        self.bat_extra_w, self.pv_extra_w, self.ctl_extra_w = [], [], []
         return fr
 
     # ── страницы боковой панели ──
@@ -281,8 +285,6 @@ class SettingsPage:
         w, v = self._page()
         for key in ("load_mode", "load_kwh", "load_winter", "load_profile"):
             self._dfield(v, key)
-        self.lab_house = self._hint(True)
-        v.addWidget(self.lab_house)
         v.addStretch(1)
         return w
 
@@ -290,8 +292,6 @@ class SettingsPage:
         w, v = self._page()
         for key in ("grid_mode", "back_soc", "tariff"):
             self._dfield(v, key)
-        self.lab_grid = self._hint(True)
-        v.addWidget(self.lab_grid)
         v.addStretch(1)
         return w
 
@@ -317,8 +317,6 @@ class SettingsPage:
         iv.addWidget(_lab("Кабель АКБ → инвертор", "subHead"))
         for key in ("iw_len", "iw_s", "iw_mat"):
             self._dfield(iv, key)
-        self.lab_wire2 = self._hint()
-        iv.addWidget(self.lab_wire2)
         iv.addStretch(1)
         sa.setWidget(inner)
         v.addWidget(sa, 1)
@@ -454,7 +452,6 @@ class SettingsPage:
             title = "⚡ Инвертор"
             big = f"{c['inv_p'] / 1000:g} кВт · АКБ {s['bat_v']} В"
         elif kind == "ctl" and idx < len(c["fields"]) and not c["fields"][idx]["ctl"]:
-            fc = c["fields"][idx]
             md = MPPT_DB.get(s.get("m_preset"))
             title = "🔀 Отдельный MPPT — прибор на линии АКБ"
             big = f"{md[1] if md else 'свой контроллер'} × {int(s['n_mppt_max'])}"
@@ -576,7 +573,7 @@ class SettingsPage:
         return dict(
             inv=dict(big=f"{c['inv_p'] / 1000:g} кВт", builtin=builtin, ports=nports if builtin else 0,
                      lines=[inv_name, f"{s['bat_v']} В · " + (inputs_word(nports) if builtin else
-                                                    "MPPT не занят" if inv_is_hybrid(s.get("inv_preset")) else "без MPPT"),
+                                                    "без MPPT"),
                             (f"занято {used} из {nports}" if builtin else "панели — через контроллеры",
                              _OK if (not builtin or used <= nports) else _ERR)],
                      tip=f"{inv_name}: {c['inv_p'] / 1000:g} кВт, АКБ {s['bat_v']} В"),
@@ -591,7 +588,7 @@ class SettingsPage:
                       lines=[f"{float(s['tariff']):g} грн/кВт·ч"] + ([f"≈{grid_y:.0f} кВт·ч/год"] if grid_y is not None else [])),
             bus=dict(text=f"{float(s['iw_s']):g} мм² · {float(s['iw_len']):g} м · {i_inv:.0f} А" + {"ok": "", "warn": " ⚠", "err": " ✗"}[blvl],
                      lvl=blvl),
-            bus_v=f"шина АКБ {c['bank_v']:.1f} В", ac_text=f"AC 230 В · {c['inv_p'] / 1000:g} кВт",
+            bus_v=f"шина АКБ {c['bank_v']:.1f} В",
             text="\n".join(lines))
 
     def _cons_update(self, c=None):
@@ -754,9 +751,13 @@ class SettingsPage:
             return
         ex.append(dict(ex[j]))
         s[key] = ex
+        if kind == "pv" and s.get("mppt_mode") != "builtin" and int(s["n_in"]) + len(ex) > int(s["n_mppt_max"]):
+            s["n_mppt_max"] = int(s["n_in"]) + len(ex)           # у отдельных контроллеров — ещё один такой же
+            self._set_widget("n_mppt_max", s["n_mppt_max"])
         self._refresh_station()
         self._recalc_timer.start(200)
-        self._cons_pick("field", len(make_ctx(s)["fields"]) - 1 if kind == "ctl" else idx + 1)
+        fields = make_ctx(s)["fields"]                           # копия — последняя в своём списке
+        self._cons_pick("field", max(i for i, f in enumerate(fields) if i > 0 and bool(f["ctl"]) == (kind == "ctl")))
 
     # ─────────────── другие поля: на входах инвертора и на отдельных MPPT ───────────────
     def _fx_key(self, kind):
@@ -1010,8 +1011,6 @@ class SettingsPage:
                         self._set_widget(pkey, "custom")
         if key == "inv_preset":
             self._apply_inv_preset(val)
-        elif key == "mppt_mode":
-            self._apply_mppt_source(mode_changed=True)
         elif key == "n_pan":
             self._fit_layout(force=True)
         elif key == "n_mppt_max":
@@ -1059,7 +1058,6 @@ class SettingsPage:
         mode = "builtin" if pr.get("mppt") else "separate"
         changed = mode != s.get("mppt_mode")
         s["mppt_mode"] = mode
-        self._set_widget("mppt_mode", mode)
         self._apply_mppt_source(mode_changed=changed)
 
     def _apply_mppt_source(self, mode_changed=False):
@@ -1072,8 +1070,7 @@ class SettingsPage:
                 for k, v in mp.items():
                     s[k] = v
                     self._set_widget(k, v)
-            if mode_changed:
-                self._overflow_to_ctl()
+            self._overflow_to_ctl()                        # входов меньше, чем полей — лишние на отдельный MPPT
         else:
             pr = MPPT_PRESETS.get(s["m_preset"], (None, None))[1]
             if pr:
@@ -1082,9 +1079,9 @@ class SettingsPage:
                     self._set_widget(k, v)
             s["pv_pmax"] = 0
             self._set_widget("pv_pmax", 0)
-            if mode_changed:
-                s["n_mppt_max"] = 1
-                self._set_widget("n_mppt_max", 1)
+            if mode_changed:                               # контроллеров — столько, сколько полей на них
+                s["n_mppt_max"] = max(1, int(s["n_in"]) + len(s.get("pv_extra") or []))
+                self._set_widget("n_mppt_max", s["n_mppt_max"])
         self._fit_layout()
 
     def _overflow_to_ctl(self):
@@ -1102,6 +1099,8 @@ class SettingsPage:
             it = ex.pop(keep)
             ce.append(dict(it, mppt=mp))
             moved.append(len(moved) + keep + 2)
+        if not moved:
+            return
         s["pv_extra"], s["ctl_extra"] = ex, ce
         s["cons_pos"] = {k: v for k, v in (s.get("cons_pos") or {}).items()
                          if not k.split(":")[-1].startswith(("p", "c"))}   # номера сменились — места заново
@@ -1183,9 +1182,10 @@ class SettingsPage:
         voc_cold = ns * c["voc"] * (1 + c["bvoc"] * (float(s["t_min"]) - 25))
         lim = f" (предел {c['iin_max']:.0f} А)" if c["iin_max"] > 0 else ""
         kmax = int(s["n_mppt_max"])
+        k_all = inv_inputs_used(c) if not sep else k + len(s.get("pv_extra") or [])   # с другими полями
         where = (f"На {'каждый ' if k > 1 else ''}{'контроллер' if sep else 'вход MPPT'}: {ns * np_} "
                  f"{plural(ns * np_, 'панель', 'панели', 'панелей')} — ")
-        free = (f" · занято {k} из {kmax}, свободно {kmax - k}" if kmax > k else
+        free = (f" · занято {k_all} из {kmax}, свободно {kmax - k_all}" if kmax > k_all else
                 (f" · заняты все {kmax}" if kmax > 1 else ""))
         txt = (where + f"цепочка из {ns}: Vmp {ns * c['vmp']:.0f} В, Voc {ns * c['voc']:.0f} В, на морозе {voc_cold:.0f} В "
                f"(MPPT до {c['v_max']:.0f} В) · ток {np_ * c['imp']:.1f} А на вход{lim}{free}")
@@ -1203,7 +1203,6 @@ class SettingsPage:
         want = "builtin" if (hybrid or custom_inv) else "separate"   # свои MPPT — у гибрида; без MPPT — отдельные приборы
         if s.get("mppt_mode") != want:
             s["mppt_mode"] = want
-            self._set_widget("mppt_mode", want)
             self._apply_mppt_source(mode_changed=True)
             builtin = want == "builtin"
         self.lab_x2.setVisible(builtin and custom_inv)

@@ -1,8 +1,9 @@
-"""mod_equipment.py  v1.8.0
+"""mod_equipment.py  v1.9.7
 Оборудование: инверторы (гибриды со встроенным MPPT и без), MPPT-контроллеры, АКБ;
 профили нагрузки; провода и контакты (ПУЭ).
 
 Журнал:
+v1.9.7: убрана неиспользуемая WIRE_SECTIONS.
 v1.8.0: +27 инверторов 8–16 кВт (48 В): 11 кВт с 2 MPPT — Voltronic Axpert MAX II/III/Ultra/Duplex, Axioma ISMPPT BFP 11000,
         EASun SMG II / SMW 11K, Must PV19-11048 EXP, PH18 PRO 8/10K; PowMr HVM8.2M/10.2M, SRNE ASF, Felicity IVEM-II,
         Anern EVO-10200, Luxpower SNA 12K, Deye SUN-14K/16K-SG01LP1, Victron Quattro 10/15 кВА; типовой «Гибрид 11 кВт, 2 MPPT».
@@ -656,4 +657,3 @@ AMP_CU = {1.5: 23, 2.5: 30, 4: 41, 6: 50, 10: 80, 16: 100, 25: 140, 35: 170, 50:
 
 AMP_AL = {2.5: 24, 4: 32, 6: 39, 10: 60, 16: 75, 25: 105, 35: 130, 50: 165, 70: 210, 95: 255}
 
-WIRE_SECTIONS = (4, 6, 10, 16, 25, 35, 50)
