@@ -242,11 +242,23 @@ class ResultsPages:
         self.lab_bank.setText(
             head + f" · {c['bank_v']:.1f} В, {c['bank_ah']:.0f} А·ч, {c['bank_wh'] / 1000:.1f} кВт·ч "
               f"(полезно {c['usable_wh'] / 1000:.1f}) · ток заряда до {c['bank_ich']:.0f} А" + self._cell_info(c))
+        # потери в кабелях словами: при полном солнце (STC) и при полной мощности инвертора
+        i_pv = c["np"] * c["imp"]
+        r_pv = wire_r(c, 20)
+        p_in = c["ns"] * c["np"] * c["pmax"]
+        loss_pv = i_pv ** 2 * r_pv
+        i_inv = c["inv_p"] / max(0.5, c["inv_eta"]) / (c["sys_nom"] * 0.95)
+        dest = "контроллера" if not c["builtin"] else "инвертора"
         self.lab_wire.setText(
-            f"Сопротивление линий с контактами: панели→MPPT {wire_r(c, 20) * 1000:.0f} мОм"
-            + ("" if c["builtin"] else f" · MPPT→АКБ {c['rb'] * 1000:.1f} мОм") + " · "
-            f"АКБ→инвертор {c['ri'] * 1000:.1f} мОм. Сечения: "
-            + " · ".join(f"{float(s[k]):g} мм² = ⌀{s2d(s[k]):.1f} мм" for k in WIRE_S_KEYS))
+            f"Кабель панелей: {float(s['wire_len']):g} м до {dest} → провода «+» и «−» = {2 * float(s['wire_len']):g} м, "
+            f"{float(s['wire_s']):g} мм² {'медь' if s['wire_mat'] == 'cu' else 'алюминий'}; с разъёмами {r_pv * 1000:.0f} мОм. "
+            f"При полном солнце ток {i_pv:.1f} А → теряется ≈{loss_pv:.0f} Вт ({loss_pv / max(1.0, p_in) * 100:.1f}%)"
+            + (f" на каждом из {c['k']} полей" if c["k"] > 1 else "") + ". "
+            + ("" if c["builtin"] else f"Контроллер→АКБ {c['rb'] * 1000:.1f} мОм. ")
+            + f"АКБ→инвертор: {c['ri'] * 1000:.1f} мОм, на {c['inv_p'] / 1000:g} кВт ток {i_inv:.0f} А → "
+              f"{i_inv ** 2 * c['ri']:.0f} Вт. Диаметр жилы: "
+            + " · ".join(f"{float(s[k]):g} мм² = ⌀{s2d(s[k]):.1f} мм" for k in WIRE_S_KEYS
+                         if not (c["builtin"] and k == "bw_s")))           # у гибрида кабеля контроллер→АКБ нет
         # график по часам
         xs = [t for t, _ in res[(m, "clear")]["curve"]]
         series = []

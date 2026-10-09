@@ -578,6 +578,9 @@ class SettingsPage:
         for key in ("pv_pmax",):
             for wdg in self.rows.get(key, []):
                 wdg.setVisible(builtin)
+        h1 = self.rows.get("_h1")
+        if h1:
+            h1[0].setText("Кабель от панелей до инвертора" if builtin else "Кабель от панелей до контроллера")
         for key in ("_h2", "bw_len", "bw_s", "bw_mat"):
             for wdg in self.rows.get(key, []):
                 wdg.setVisible(not builtin)
