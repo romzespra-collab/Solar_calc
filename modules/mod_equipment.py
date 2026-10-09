@@ -1,8 +1,10 @@
-"""mod_equipment.py  v1.9.7
+"""mod_equipment.py  v1.9.8
 Оборудование: инверторы (гибриды со встроенным MPPT и без), MPPT-контроллеры, АКБ;
 профили нагрузки; провода и контакты (ПУЭ).
 
 Журнал:
+v1.9.8: +6 инверторов — топ продаж в Украине, которых не было: Deye SUN-8K-SG05LP1-EU, Anern AN-SCI-EVO-6200
+        и AN-FGI-S12000, EASun ISolar-SMH-III-6.2KW, Must PH18-5048 PRO и PV18-2012 PRO (≈ по серии).
 v1.9.7: убрана неиспользуемая WIRE_SECTIONS; допустимый ток кабелей 120–240 мм² — по таблице ПУЭ (было линейно
         от 95 мм², 240 мм² медь давало 834 А вместо ≈605).
 v1.8.0: +27 инверторов 8–16 кВт (48 В): 11 кВт с 2 MPPT — Voltronic Axpert MAX II/III/Ultra/Duplex, Axioma ISMPPT BFP 11000,
@@ -70,6 +72,8 @@ INVERTER_DB = make_db([
      "3 фазы · х.х. 120 Вт (замер)"),
     ("deye_sun8ksg01lp1eu", "Deye", "SUN-8K-SG01LP1-EU", _inv(8000, 93, 80, 48, _mppt(500, 150, 425, 26, 190, eta=97, eta_k=0, headroom=0, pv_pmax=10400, n_mppt_max=2)),
      "х.х. 80 Вт (оценка)"),
+    ("deye_sun8ksg05lp1eu", "Deye", "SUN-8K-SG05LP1-EU", _inv(8000, 93, 90, 48, _mppt(500, 150, 425, 26, 190, eta=97, eta_k=0, headroom=0, pv_pmax=10400, n_mppt_max=2)),
+     "х.х. 90 Вт (оценка) · старт PV 125 В"),
     ("deye_sun8ksg04lp3eu", "Deye", "SUN-8K-SG04LP3-EU", _inv(8000, 93, 120, 48, _mppt(800, 200, 650, 13, 190, eta=97, eta_k=0, headroom=0, pv_pmax=10400, n_mppt_max=2)),
      "3 фазы · х.х. 120 Вт (замер)"),
     ("deye_sun10ksg04lp3eu", "Deye", "SUN-10K-SG04LP3-EU", _inv(10000, 93, 120, 48, _mppt(800, 200, 650, 26, 210, eta=97, eta_k=0, headroom=0, pv_pmax=13000, n_mppt_max=2)),
@@ -90,6 +94,10 @@ INVERTER_DB = make_db([
      "х.х. 50 Вт (оценка) · ≈ не проверено"),
     ("must_ph185248pro", "Must", "PH18-5248 PRO", _inv(5200, 92, 50, 48, _mppt(450, 150, 430, 18, 80, eta=97, eta_k=0, headroom=0, pv_pmax=5000, n_mppt_max=1)),
      "х.х. 50 Вт (оценка) · ≈ не проверено"),
+    ("must_ph185048pro", "Must", "PH18-5048 PRO", _inv(5000, 91, 50, 48, _mppt(450, 150, 430, 0, 100, eta=97, eta_k=0, headroom=0, pv_pmax=6000, n_mppt_max=1)),
+     "х.х. 50 Вт (оценка) · ≈ по серии PH1800 PRO · ток на вход MPPT не указан"),
+    ("must_pv182012pro", "Must", "PV18-2012 PRO", _inv(1600, 90, 30, 12, _mppt(400, 30, 320, 0, 80, eta=97, eta_k=0, headroom=0, pv_pmax=1500, n_mppt_max=1)),
+     "х.х. 30 Вт (оценка) · ≈ по серии PV18 PRO · ток на вход MPPT не указан"),
     ("axioma_ispwm3000", "Axioma", "ISPWM 3000", _inv(2400, 91, 30, 24),
      "х.х. 30 Вт (оценка) · без MPPT · ≈ не проверено"),
     ("axioma_ismpptbfp3600", "Axioma", "ISMPPT BFP 3600", _inv(3600, 92, 50, 24, _mppt(500, 120, 450, 0, 100, eta=97, eta_k=0, headroom=0, pv_pmax=4000, n_mppt_max=1)),
@@ -106,6 +114,10 @@ INVERTER_DB = make_db([
      "х.х. 80 Вт (оценка) · ≈ не проверено"),
     ("anern_anscieco6200", "Anern", "AN-SCI-ECO-6200", _inv(6200, 92, 80, 48, _mppt(500, 90, 450, 0, 120, eta=97, eta_k=1, headroom=0, pv_pmax=0, n_mppt_max=1)),
      "х.х. 80 Вт (оценка) · ток на вход MPPT не указан"),
+    ("anern_anscievo6200", "Anern", "AN-SCI-EVO-6200", _inv(6200, 92, 60, 48, _mppt(450, 60, 450, 27, 120, eta=97, eta_k=0, headroom=0, pv_pmax=6500, n_mppt_max=1)),
+     "х.х. 60 Вт (оценка) · Voc 500 В без нагрузки · вход MPPT 27 А (на сайте Anern 22 А)"),
+    ("anern_anfgis12000", "Anern", "AN-FGI-S12000", _inv(12000, 91, 100, 48, _mppt(500, 60, 450, 22.5, 160, eta=97, eta_k=0, headroom=0, pv_pmax=15000, n_mppt_max=2)),
+     "х.х. 100 Вт (оценка) · старт PV 120 В"),
     ("growatt_spf3500es", "Growatt", "SPF 3500 ES", _inv(3500, 91, 50, 48, _mppt(450, 120, 430, 18, 80, eta=97, eta_k=0, headroom=0, pv_pmax=4500, n_mppt_max=1)),
      "х.х. 50 Вт (оценка)"),
     ("growatt_spf5000es", "Growatt", "SPF 5000 ES", _inv(5000, 91, 70, 48, _mppt(450, 120, 430, 0, 100, eta=97, eta_k=0, headroom=0, pv_pmax=6000, n_mppt_max=1)),
@@ -173,6 +185,8 @@ INVERTER_DB = make_db([
      "КПД ≈ типовой · х.х. 25 Вт (оценка) · ток на вход MPPT не указан"),
     ("easun_isolarsmhii32kw24v", "EASun", "ISolar-SMH-II-3.2KW (24V)", _inv(3000, 90, 35, 24, _mppt(450, 55, 450, 0, 80, eta=97, eta_k=0, headroom=0, pv_pmax=3000, n_mppt_max=1)),
      "КПД ≈ типовой (98% в паспорте — КПД заряда) · х.х. 35 Вт (оценка) · ток на вход MPPT не указан"),
+    ("easun_isolarsmhiii62kw", "EASun", "ISolar-SMH-III-6.2KW", _inv(6200, 92, 60, 48, _mppt(450, 60, 450, 22, 120, eta=97, eta_k=0, headroom=0, pv_pmax=6500, n_mppt_max=1)),
+     "х.х. 60 Вт (оценка) · Voc 450 В (в части описаний 500 В)"),
     ("easun_isolarsmgii32kw24v", "EASun", "ISolar-SMG-II-3.2KW-24V", _inv(3200, 91, 35, 24, _mppt(500, 30, 500, 15, 100, eta=97, eta_k=0, headroom=0, pv_pmax=4000, n_mppt_max=1)),
      "х.х. 35 Вт (оценка)"),
     ("felicity_ivcm1012pro", "Felicity", "IVCM1012 PRO", _inv(1000, 91, 25, 12, _mppt(105, 15, 90, 0, 60, eta=97, eta_k=0, headroom=0, pv_pmax=800, n_mppt_max=1)),
