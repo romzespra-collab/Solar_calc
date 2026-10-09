@@ -1,7 +1,9 @@
-"""mod_widgets.py  v1.6.0
+"""mod_widgets.py  v1.7.0
 виджеты Qt: Toggle, Segmented, Stepper, график Chart, таблицы с меню
 
 Журнал:
+v1.7.0: PresetPicker: поля не длиннее нужного (производитель ≤200, серия ≤330, модель ≤300/360 px);
+        allow_custom=False — без «Своё» (для дополнительных сборок АКБ); extra_menu — свои пункты меню.
 v1.6.0: PresetPicker: группа без диапазона мощности (инверторы — по напряжению АКБ).
 v1.5.0: PresetPicker — третий уровень «серия» (панели: производитель → серия → мощность), 🔎 поиск по всей
         базе (FindDialog), меню по правому клику (найти, копировать название/паспорт, своё).
@@ -190,10 +192,12 @@ class PresetPicker(QWidget):
     series={ключ: серия} — третий уровень (панели). 🔎 — поиск по всей базе; правый клик — меню."""
     changed = Signal(str)
 
-    def __init__(self, db, custom_label, parent=None, series=None, what="модель"):
+    def __init__(self, db, custom_label, parent=None, series=None, what="модель", allow_custom=True):
         super().__init__(parent)
         self.db = db                                   # {ключ: (производитель, модель, параметры, описание)}
         self.series = series
+        self.allow_custom = allow_custom
+        self.extra_menu = None                         # fn(QMenu) — свои пункты в меню по правому клику
         self.custom_label = custom_label
         self.what = what
         self.tree = {}                                 # производитель → серия → [ключи] (порядок базы)
@@ -203,6 +207,7 @@ class PresetPicker(QWidget):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
+        lay.setSizeConstraint(QHBoxLayout.SetMinAndMaxSize)   # ширина выбора — не больше суммы полей
         self.cb_brand = NoWheelCombo()
         self.cb_brand.setToolTip("Производитель")
         self.cb_brand.setMaxVisibleItems(24)
@@ -219,9 +224,15 @@ class PresetPicker(QWidget):
             cb.customContextMenuRequested.connect(lambda pos, cb=cb: self._menu(cb.mapToGlobal(pos)))
         self.cb_series.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.cb_model.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.cb_brand.setMaximumWidth(200)             # не растягивать на всё окно
+        self.cb_series.setMaximumWidth(330)
+        self.cb_model.setMaximumWidth(300 if series else 360)
+        for cb in (self.cb_brand, self.cb_series, self.cb_model):
+            cb.view().setMinimumWidth(320)             # список шире поля — названия видны целиком
         for b, ss in self.tree.items():
             self.cb_brand.addItem(f"{b}  ({sum(len(x) for x in ss.values())})", b)
-        self.cb_brand.addItem("Своё", "")
+        if allow_custom:
+            self.cb_brand.addItem("Своё", "")
         self.btn_find = QToolButton()
         self.btn_find.setText("🔎")
         self.btn_find.setObjectName("stepBtn")
@@ -360,9 +371,13 @@ class PresetPicker(QWidget):
             b, name, *_ = self.db[k]
             m.addAction("📋 Копировать название", lambda: cb.setText(f"{b} {name}"))
             m.addAction("📋 Копировать паспорт", lambda: cb.setText(self._passport()))
-        m.addSeparator()
-        a = m.addAction("✎ Своё — параметры вручную", lambda: (self.setValue("custom"), self.changed.emit("custom")))
-        a.setEnabled(k != "custom")
+        if self.allow_custom:
+            m.addSeparator()
+            a = m.addAction("✎ Своё — параметры вручную", lambda: (self.setValue("custom"), self.changed.emit("custom")))
+            a.setEnabled(k != "custom")
+        if self.extra_menu:
+            m.addSeparator()
+            self.extra_menu(m)
         m.exec(gpos)
 
 

@@ -1,7 +1,9 @@
-"""mod_page_settings.py  v1.6.0
+"""mod_page_settings.py  v1.7.0
 Страница «Настройки станции»: карточка «Моя станция» (что стоит), поля, пресеты, реакция на изменения.
 
 Журнал:
+v1.7.0: «Моя станция» — поля своей ширины (не на всё окно); АКБ: «＋ Другая сборка» — разные АКБ параллельно
+        (до 5 других: тип × сборок, ✕ — убрать, меню по правому клику).
 v1.6.0: инвертор — производитель → напряжение АКБ (12 / 24 / 48 В, с MPPT / без) → модель.
 v1.5.1: АКБ × сборок (1–10); у сборок из ячеек/АКБ последовательно — «сб.», у готовых АКБ на систему — «шт».
 v1.5.0: панели — производитель → серия → мощность из полной базы (21 тыс.), 🔎 поиск у всех выборов.
@@ -13,14 +15,15 @@ v1.3.0: вынесено из solar_calc.pyw v1.2.1; карточка «Моя �
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QComboBox, QLabel, QLineEdit
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QComboBox, QLabel, QLineEdit, QToolButton
 
 from .mod_base import log
 from .mod_panels import PANEL_DB, PANEL_SERIES
 from .mod_equipment import INVERTER_DB, INVERTER_SERIES, MPPT_DB, BATTERY_DB, MPPT_PRESETS, inv_is_hybrid
 from .mod_fields import (INPUT_CARDS, INT_KEYS, INV_KEYS, WIRE_S_KEYS, WIRE_RANGE, PRESET_GROUPS, MPPT_MODES,
                          s2d, d2s)
-from .mod_model import make_ctx, layouts, layout_status, best_layout, bank_series
+from .mod_model import make_ctx, layouts, layout_status, best_layout, bank_series, bank_groups
+from .mod_config import BAT_EXTRA_MAX
 from .mod_theme import _OK, _ERR, _WARN
 from .mod_widgets import Toggle, Segmented, NoWheelCombo, Stepper, PresetPicker, _lab, _card, _btn
 
@@ -78,6 +81,7 @@ class SettingsPage:
 
         def hint(rich=False):
             h = _lab("", "hint", True)
+            h.setMaximumWidth(1100)
             if rich:
                 h.setTextFormat(Qt.RichText)
             return h
@@ -90,68 +94,156 @@ class SettingsPage:
             self.w[key] = st
             return st
 
+        def row(*items):
+            """Строка: поля своей ширины слева, справа пусто (поля не растягиваются на всё окно)."""
+            h = QHBoxLayout()
+            h.setSpacing(6)
+            for it in items:
+                if isinstance(it, tuple):
+                    h.addWidget(*it)
+                else:
+                    h.addWidget(it)
+            h.addStretch(1)                        # поля (вес 10) растут до своего предела, остальное — пусто
+            return h
+
         # панели × шт
         self.pk_pan = PresetPicker(PANEL_DB, "Своя панель — паспорт ниже", series=PANEL_SERIES, what="панель")
         self.pk_pan.setToolTip("Производитель → серия → мощность; 🔎 — поиск по всей базе. Подставит паспорт")
         self.pk_pan.changed.connect(lambda k: self._on_field("p_preset", k))
         self.w["p_preset"] = self.pk_pan
         g.addWidget(lab("Панели", "Какие панели стоят"), 0, 0)
-        g.addWidget(self.pk_pan, 0, 1)
-        g.addWidget(_lab("×", "fieldLab"), 0, 2)
-        g.addWidget(count(1, 300, "n_pan", "Сколько панелей всего"), 0, 3)
+        g.addLayout(row((self.pk_pan, 10), _lab("×", "fieldLab"), count(1, 300, "n_pan", "Сколько панелей всего")), 0, 1)
         self.lab_total = hint()
-        g.addWidget(self.lab_total, 1, 1, 1, 3)
+        g.addWidget(self.lab_total, 1, 1)
         # схема
         self.cb_layout = NoWheelCombo()
         self.cb_layout.setToolTip("Как соединены панели: последовательно × параллельно, на сколько входов MPPT")
+        self.cb_layout.setMinimumWidth(260)
+        self.cb_layout.setMaximumWidth(460)
         self.cb_layout.currentIndexChanged.connect(self._on_layout)
         g.addWidget(lab("Схема", "Соединение панелей"), 2, 0)
-        g.addWidget(self.cb_layout, 2, 1)
-        g.addWidget(_btn("★ Лучшая", "chip", "Подобрать схему с наибольшей выработкой без ошибок",
-                         lambda: self._fit_layout(force=True, announce=True)), 2, 2, 1, 2)
+        g.addLayout(row((self.cb_layout, 10), _btn("★ Лучшая", "chip", "Подобрать схему с наибольшей выработкой без ошибок",
+                                                   lambda: self._fit_layout(force=True, announce=True))), 2, 1)
         self.lab_layout = hint(True)
-        g.addWidget(self.lab_layout, 3, 1, 1, 3)
+        g.addWidget(self.lab_layout, 3, 1)
         # инвертор
         self.pk_inv = PresetPicker(INVERTER_DB, "Свой инвертор — параметры ниже", series=INVERTER_SERIES, what="инвертор")
         self.pk_inv.changed.connect(lambda k: self._on_field("inv_preset", k))
         self.w["inv_preset"] = self.pk_inv
         g.addWidget(lab("Инвертор", "Инвертор: гибрид (MPPT внутри) или без MPPT"), 4, 0)
-        g.addWidget(self.pk_inv, 4, 1, 1, 3)
+        g.addLayout(row((self.pk_inv, 10)), 4, 1)
         self.lab_inv = hint()
-        g.addWidget(self.lab_inv, 5, 1, 1, 3)
+        g.addWidget(self.lab_inv, 5, 1)
         # MPPT
         self.seg_mppt = Segmented(MPPT_MODES)
         self.seg_mppt.setToolTip("Гибридный инвертор — MPPT встроен; к инвертору без MPPT нужен отдельный контроллер")
+        self.seg_mppt.setMaximumWidth(420)
         self.seg_mppt.changed.connect(lambda k: self._on_field("mppt_mode", k))
         self.w["mppt_mode"] = self.seg_mppt
         self.pk_mppt = PresetPicker(MPPT_DB, "Свой контроллер — параметры ниже", what="контроллер")
         self.pk_mppt.changed.connect(lambda k: self._on_field("m_preset", k))
         self.w["m_preset"] = self.pk_mppt
         self.lab_x2 = _lab("×", "fieldLab")
-        mrow = QHBoxLayout()
-        mrow.setSpacing(6)
-        mrow.addWidget(self.seg_mppt)
-        mrow.addWidget(self.pk_mppt, 1)
-        mrow.addWidget(self.lab_x2)
-        mrow.addWidget(count(1, 12, "n_mppt_max", "Сколько контроллеров (или входов MPPT у своего инвертора)"))
-        mrow.addStretch(0)
         g.addWidget(lab("MPPT", "Солнечный контроллер заряда"), 6, 0)
-        g.addLayout(mrow, 6, 1, 1, 3)
+        g.addLayout(row((self.seg_mppt, 4), (self.pk_mppt, 10), self.lab_x2,
+                        count(1, 12, "n_mppt_max", "Сколько контроллеров (или входов MPPT у своего инвертора)")), 6, 1)
         self.lab_mppt = hint()
-        g.addWidget(self.lab_mppt, 7, 1, 1, 3)
-        # АКБ × шт
+        g.addWidget(self.lab_mppt, 7, 1)
+        # АКБ × сборок; ниже — другие сборки (разные АКБ параллельно)
         self.pk_bat = PresetPicker(BATTERY_DB, "Свои АКБ — параметры ниже", what="АКБ")
         self.pk_bat.changed.connect(lambda k: self._on_field("bat_preset", k))
+        self.pk_bat.extra_menu = lambda m: m.addAction("＋ Добавить другую сборку", self._bat_extra_add)
         self.w["bat_preset"] = self.pk_bat
-        g.addWidget(lab("АКБ", "Аккумуляторы"), 8, 0)
-        g.addWidget(self.pk_bat, 8, 1)
-        g.addWidget(_lab("×", "fieldLab"), 8, 2)
-        g.addWidget(count(1, 10, "bat_packs", "Сколько сборок (или готовых АКБ) параллельно, до 10. Сколько штук "
-                                               "последовательно в сборке — по напряжению системы, считается само"), 8, 3)
+        g.addWidget(lab("АКБ", "Аккумуляторы: основная сборка; другие — кнопкой «＋ Другая сборка»"), 8, 0)
+        g.addLayout(row((self.pk_bat, 10), _lab("×", "fieldLab"),
+                        count(1, 10, "bat_packs", "Сколько таких сборок (или готовых АКБ) параллельно, до 10. Сколько "
+                                                  "штук последовательно в сборке — по напряжению системы, считается само")), 8, 1)
+        self.lay_bat_extra = QVBoxLayout()
+        self.lay_bat_extra.setSpacing(6)
+        self.bat_extra_w = []
+        g.addLayout(self.lay_bat_extra, 9, 1)
+        self.btn_bat_add = _btn("＋ Другая сборка", "chip", "Есть ещё АКБ другого типа или ёмкости — добавьте их сюда. "
+                                "Все сборки стоят параллельно на одном напряжении системы", self._bat_extra_add)
+        g.addLayout(row(self.btn_bat_add, _lab("разные АКБ параллельно на одной шине — до 5 других сборок", "hint")), 10, 1)
         self.lab_bank = hint(True)
-        g.addWidget(self.lab_bank, 9, 1, 1, 3)
+        g.addWidget(self.lab_bank, 11, 1)
         v.addLayout(g)
         return fr
+
+    # ─────────────── другие сборки АКБ ───────────────
+    def _bat_extra_rows(self):
+        """Строки «другая сборка» — по s["bat_extra"] (после загрузки профиля, добавления, удаления)."""
+        lay = self.lay_bat_extra
+        while lay.count():
+            it = lay.takeAt(0)
+            if it.widget() is not None:
+                it.widget().deleteLater()
+        self.bat_extra_w = []
+        for i, it in enumerate(self.s.get("bat_extra") or []):
+            w = QWidget()
+            h = QHBoxLayout(w)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(6)
+            pk = PresetPicker(BATTERY_DB, "", what="АКБ", allow_custom=False)
+            pk.setValue(it["preset"])
+            pk.setToolTip(f"Сборка {i + 2}: какие АКБ")
+            st = Stepper(1, 10, 1, 0, "сб.")
+            st.setMaximumWidth(160)
+            st.setValue(it["n"])
+            st.setToolTip("Сколько таких сборок параллельно")
+            rm = QToolButton()
+            rm.setText("✕")
+            rm.setObjectName("stepBtn")
+            rm.setCursor(Qt.PointingHandCursor)
+            rm.setToolTip("Убрать эту сборку")
+            h.addWidget(pk, 10)
+            h.addWidget(_lab("×", "fieldLab"))
+            h.addWidget(st)
+            h.addWidget(rm)
+            h.addStretch(1)
+            pk.changed.connect(lambda k, i=i: self._bat_extra_set(i, preset=k))
+            st.changed.connect(lambda val, i=i: self._bat_extra_set(i, n=int(round(val))))
+            rm.clicked.connect(lambda _=False, i=i: self._bat_extra_del(i))
+
+            def menu(m, i=i):
+                m.addAction("🗑 Убрать эту сборку", lambda: self._bat_extra_del(i))
+                m.addAction("＋ Добавить ещё сборку", self._bat_extra_add)
+            pk.extra_menu = menu
+            w.setContextMenuPolicy(Qt.CustomContextMenu)
+            w.customContextMenuRequested.connect(lambda pos, w=w, pk=pk: pk._menu(w.mapToGlobal(pos)))
+            lay.addWidget(w)
+            self.bat_extra_w.append((pk, st))
+        self.btn_bat_add.setEnabled(len(self.s.get("bat_extra") or []) < BAT_EXTRA_MAX)
+
+    def _bat_extra_changed(self):
+        self._refresh_station()
+        self._recalc_timer.start(200)
+
+    def _bat_extra_set(self, i, **kw):
+        ex = [dict(x) for x in self.s.get("bat_extra") or []]      # новый список — расчёт в фоне видит целый
+        if 0 <= i < len(ex):
+            ex[i].update(kw)
+            self.s["bat_extra"] = ex
+            self._bat_extra_changed()
+
+    def _bat_extra_add(self):
+        ex = [dict(x) for x in self.s.get("bat_extra") or []]
+        if len(ex) >= BAT_EXTRA_MAX:
+            return
+        key = self.s.get("bat_preset")
+        ex.append(dict(preset=key if key in BATTERY_DB else "eve_lf280k", n=1))
+        self.s["bat_extra"] = ex
+        self._bat_extra_rows()
+        self._bat_extra_changed()
+        log.info(f"＋ Добавлена сборка АКБ {len(ex) + 1} — выберите её тип")
+
+    def _bat_extra_del(self, i):
+        ex = [dict(x) for x in self.s.get("bat_extra") or []]
+        if 0 <= i < len(ex):
+            ex.pop(i)
+            self.s["bat_extra"] = ex
+            self._bat_extra_rows()
+            self._bat_extra_changed()
 
     def _page_settings(self):
         inner = QWidget()
@@ -253,6 +345,7 @@ class SettingsPage:
         for k in self.w:
             if k in self.s:
                 self._set_widget(k, self.s[k])
+        self._bat_extra_rows()
         self._sync_mw()
         self.st_ser_days.setValue(self.s["ser_days"])
         self.seg_ser_w.setValue(self.s["ser_weather"])
@@ -525,4 +618,7 @@ class SettingsPage:
         st.setValue(s["bat_packs"])
         st.setToolTip(f"Сборок по {nser} шт последовательно, параллельно — до 10" if nser > 1
                       else "Сколько АКБ параллельно, до 10")
+        for (pk, st2), gr in zip(self.bat_extra_w, bank_groups(s)[1:]):      # другие сборки: «сб.» или «шт»
+            st2.reconfigure(1, 10, 1, 0, "сб." if gr["nser"] > 1 else "шт")
+            st2.setValue(gr["n"])
         self._rebuild_layouts()

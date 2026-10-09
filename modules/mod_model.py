@@ -1,7 +1,9 @@
-"""mod_model.py  v1.5.1
+"""mod_model.py  v1.7.0
 физика станции: панели → провод → MPPT → АКБ → инвертор; заряд АКБ по 10 минутам
 
 Журнал:
+v1.7.0: разные сборки АКБ параллельно (bank_groups): основная + до 5 других из базы (s["bat_extra"]);
+        ёмкость, полезная энергия и ток заряда складываются, у каждой сборки — своя последовательность.
 v1.5.1: АКБ задаются сборками (bat_packs, 1–10): в сборке последовательно — по напряжению системы
         (bank_series), всего штук = последовательно × сборок; лишних штук больше не бывает.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; поле из k одинаковых частей (входы MPPT / контроллеры);
@@ -12,7 +14,7 @@ v1.3.0: вынесено из solar_calc.pyw v1.2.1; поле из k одина�
 import math
 
 from .mod_base import DAYS, W_KEYS
-from .mod_equipment import load_profile, CONTACT_MOHM, MAT, AMP_CU, AMP_AL
+from .mod_equipment import load_profile, CONTACT_MOHM, MAT, AMP_CU, AMP_AL, BATTERY_DB
 from .mod_sun import DT, irr_day
 
 
@@ -24,6 +26,39 @@ def bank_series(s):
     lfp = s["chem"] == "lfp"
     sys_nom = int(s["bat_v"]) * (12.8 / 12.0 if lfp else 1.0)
     return sys_nom, max(1, int(round(sys_nom / max(0.5, float(s["bat_unit_v"])))))
+
+
+def bank_groups(s):
+    """Сборки АКБ параллельно: основная (поля s) + другие из базы (s["bat_extra"] = [{preset, n}]).
+    → [dict(key, chem, unit_v, ah, c, dod, n, nser, v)] — v: напряжение одной сборки."""
+    out = [dict(key=s.get("bat_preset", "custom"), chem=s["chem"], unit_v=float(s["bat_unit_v"]), ah=float(s["bat_ah"]),
+                c=float(s["bat_c"]), dod=float(s["bat_dod"]), n=max(1, int(s["bat_packs"])))]
+    for it in s.get("bat_extra") or []:
+        d = BATTERY_DB.get(it.get("preset")) if isinstance(it, dict) else None
+        if d:
+            p = d[2]
+            out.append(dict(key=it["preset"], chem=p["chem"], unit_v=float(p["bat_unit_v"]), ah=float(p["bat_ah"]),
+                            c=float(p["bat_c"]), dod=float(p["bat_dod"]), n=max(1, int(it.get("n", 1)))))
+    for gr in out:
+        nom = int(s["bat_v"]) * (12.8 / 12.0 if gr["chem"] == "lfp" else 1.0)
+        gr["nser"] = max(1, int(round(nom / max(0.5, gr["unit_v"]))))
+        gr["v"] = gr["nser"] * gr["unit_v"]
+        gr["bad_v"] = abs(gr["v"] - nom) / nom > 0.1
+    return out
+
+
+def group_name(gr):
+    """Короткое имя сборки: «LF280K 280 А·ч», «Pylontech US5000», «свои АКБ»."""
+    d = BATTERY_DB.get(gr["key"])
+    if not d:
+        return "свои АКБ"
+    generic = d[0].startswith(("Ячейки", "Свинец", "LiFePO4"))          # бренд-«тип»: модель и так понятна
+    return f"{d[0]} {d[1]}" if d[1][:1].isdigit() or not generic else d[1]
+
+
+def bank_desc(c):
+    """«16S1P LF280K 280 А·ч + 16S2P LF105 105 А·ч» — состав банка."""
+    return " + ".join(f"{gr['nser']}S{gr['n']}P {group_name(gr)}" for gr in c["groups"])
 
 
 def make_ctx(s):
@@ -54,16 +89,16 @@ def make_ctx(s):
     c["rb"] = MAT.get(s["bw_mat"], MAT["cu"])[0] * 2 * f("bw_len") / max(0.1, f("bw_s")) + 4 * rcb
     c["ri"] = MAT.get(s["iw_mat"], MAT["cu"])[0] * 2 * f("iw_len") / max(0.1, f("iw_s")) + 4 * rcb
     # банк АКБ
-    lfp = s["chem"] == "lfp"
     sys_nom, nser = bank_series(s)
-    unit_v = max(0.5, f("bat_unit_v"))
-    npar = max(1, int(s["bat_packs"]))                # сборок параллельно
-    tfac = 1 + (0.004 if lfp else 0.008) * min(0.0, f("t_bat") - 25)
-    c.update(sys_nom=sys_nom, nser=nser, npar=npar, units=nser * npar, bank_v=nser * unit_v,
-             bank_ah=npar * f("bat_ah"), mismatch_v=abs(nser * unit_v - sys_nom) / sys_nom > 0.1)
-    c["bank_wh"] = c["bank_v"] * c["bank_ah"]
-    c["usable_wh"] = c["bank_wh"] * f("bat_dod") / 100.0 * tfac
-    c["bank_ich"] = c["bank_ah"] * f("bat_c")
+    groups = bank_groups(s)                           # сборки параллельно: основная + другие
+    tf = lambda chem: 1 + (0.004 if chem == "lfp" else 0.008) * min(0.0, f("t_bat") - 25)
+    main = groups[0]
+    c.update(sys_nom=sys_nom, nser=nser, npar=sum(gr["n"] for gr in groups), groups=groups,
+             units=sum(gr["n"] * gr["nser"] for gr in groups), bank_v=main["v"],
+             bank_ah=sum(gr["n"] * gr["ah"] for gr in groups), mismatch_v=any(gr["bad_v"] for gr in groups))
+    c["bank_wh"] = sum(gr["n"] * gr["ah"] * gr["v"] for gr in groups)
+    c["usable_wh"] = sum(gr["n"] * gr["ah"] * gr["v"] * gr["dod"] / 100.0 * tf(gr["chem"]) for gr in groups)
+    c["bank_ich"] = sum(gr["n"] * gr["ah"] * gr["c"] for gr in groups)
     iout = f("iout_max") * (1 if builtin else k)          # у отдельных контроллеров токи складываются
     c["iout_tot"] = iout
     c["ilim"] = min(iout, c["bank_ich"]) if c["bank_ich"] > 0 else iout

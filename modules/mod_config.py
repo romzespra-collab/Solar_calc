@@ -1,7 +1,8 @@
-"""mod_config.py  v1.5.1
+"""mod_config.py  v1.7.0
 параметры станции по умолчанию, config.json: загрузка, проверка, сохранение
 
 Журнал:
+v1.7.0: bat_extra — другие сборки АКБ параллельно: [{preset, n}], до 5, модель — из базы, n 1–10.
 v1.5.1: АКБ — bat_packs (сборок 1–10); старое bat_count (всего штук) переводится в сборки.
 v1.4.0: place (город), fc_soc0 (заряд АКБ для прогноза по погоде); настройки погоды и неба
         (cfg["weather"], cfg["sky"]) с проверкой типов.
@@ -18,6 +19,9 @@ from .mod_base import CONFIG_PATH, WEATHER, log
 from .mod_sun import BUILTIN_SUN
 from .mod_fields import ALL_FIELDS, INT_KEYS, WIRE_RANGE
 from .mod_model import bank_series
+from .mod_equipment import BATTERY_DB
+
+BAT_EXTRA_MAX = 5           # других сборок АКБ (кроме основной)
 
 
 DEFAULT_SYS = dict(
@@ -30,7 +34,7 @@ DEFAULT_SYS = dict(
     m_preset="cn60", v_max=150, vmpp_min=0, vmpp_max=145, iin_max=0, iout_max=60, eta=96, eta_k=3,
     own_w=4, headroom=3, mppt_mode="separate", n_mppt_max=1, pv_pmax=0,
     wire_mode="s", bw_len=1.5, bw_s=25, bw_mat="cu", iw_len=1.5, iw_s=35, iw_mat="cu",
-    bat_preset="eve_lf280k", bat_v="48", chem="lfp", bat_unit_v=3.2, bat_ah=280, bat_packs=1, bat_dod=90,
+    bat_preset="eve_lf280k", bat_v="48", chem="lfp", bat_unit_v=3.2, bat_ah=280, bat_packs=1, bat_extra=[], bat_dod=90,
     bat_c=0.5, t_bat=15, bat_ch=56.8, eta_bat=97,
     inv_preset="hyb5", inv_p=6000, inv_eta=92, inv_idle=50, inv_hours=24, inv_bat_v=48,
     load_mode="m", load_kwh=250, load_winter=30, night_share=50, load_profile="typ",
@@ -83,6 +87,14 @@ def clean_sys(d):
             out["bat_packs"] = min(10, max(1, n))
         except (TypeError, ValueError, KeyError):
             pass
+    ex = []
+    for it in d.get("bat_extra") if isinstance(d.get("bat_extra"), list) else []:
+        try:
+            if isinstance(it, dict) and str(it.get("preset")) in BATTERY_DB and len(ex) < BAT_EXTRA_MAX:
+                ex.append(dict(preset=str(it["preset"]), n=min(10, max(1, int(float(it.get("n", 1)))))))
+        except (TypeError, ValueError):
+            pass
+    out["bat_extra"] = ex
     out["n_in"] = min(out["n_in"], out["n_mppt_max"])
     out["n_pan"] = out["n_in"] * out["ns"] * out["np"]      # количество панелей = входы × S × P
     return out

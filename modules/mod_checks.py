@@ -1,14 +1,15 @@
-"""mod_checks.py  v1.5.1
+"""mod_checks.py  v1.7.0
 проверки схемы, проводов, MPPT, АКБ, инвертора
 
 Журнал:
+v1.7.0: разные сборки АКБ: состав банка, разная химия — ошибка, разное напряжение сборок — предупреждение.
 v1.5.1: АКБ задаются сборками — проверок «мало АКБ» и «лишние АКБ» больше нет.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; проверки на один вход MPPT (k входов/контроллеров),
         встроенный MPPT гибрида (предел мощности PV, ток заряда), напряжение АКБ инвертора.
 """
 
 from .mod_base import MONTHS_S, DAYS
-from .mod_model import wire_r, year_kwh, ampacity
+from .mod_model import wire_r, year_kwh, ampacity, bank_desc, group_name
 
 
 def make_checks(s, c, res):
@@ -68,7 +69,7 @@ def make_checks(s, c, res):
                                    f"{(c['pstc_tot'] / pv - 1) * 100:.0f}%. Проверьте паспорт (Max PV input power)."))
     else:
         peak_all = max(res[(m, 'clear')]["peak_i"] for m in range(12))
-        who = "MPPT" if c["ilim"] >= c["iout_tot"] else f"АКБ ({c['bank_ah']:.0f} А·ч × {float(s['bat_c']):g}C)"
+        who = "MPPT" if c["ilim"] >= c["iout_tot"] else f"АКБ (до {c['bank_ich']:.0f} А)"
         if clip_y > 0.01 * max(y, 1e-9):
             ch.append(("warn", f"Упор в ток заряда {c['ilim']:.0f} А (ограничивает {who}): теряется ≈{clip_y:.0f} кВт·ч/год ({clip_pct:.1f}%)."))
         else:
@@ -89,11 +90,24 @@ def bat_checks(s, c, res, bal):
     iv = int(float(s.get("inv_bat_v", 0) or 0))
     if iv and iv != sv:
         ch.append(("err", f"Инвертор рассчитан на АКБ {iv} В, а выбрана система {sv} В."))
-    if c["mismatch_v"]:
-        ch.append(("err", f"АКБ по {float(s['bat_unit_v']):g} В не собрать в систему {sv} В."))
-    ch.append(("ok", f"Банк: {c['nser']}S{c['npar']}P ({c['units']} шт) = {c['bank_v']:.1f} В {c['bank_ah']:.0f} А·ч = "
+    groups = c["groups"]
+    for gr in groups:
+        if gr["bad_v"]:
+            ch.append(("err", f"{group_name(gr)}: АКБ по {gr['unit_v']:g} В не собрать в систему {sv} В."))
+    ch.append(("ok", f"Банк: {bank_desc(c)} ({c['units']} шт) = {c['bank_ah']:.0f} А·ч, "
                      f"{c['bank_wh'] / 1000:.1f} кВт·ч, полезно {c['usable_wh'] / 1000:.1f} кВт·ч."))
-    if s["chem"] == "lfp" and float(s["t_bat"]) < 0:
+    if len({gr["chem"] for gr in groups}) > 1:
+        ch.append(("err", "В параллель стоят литий и свинец — так нельзя: разные напряжения заряда, свинец недозаряжен "
+                          "или литий перезаряжен. Разнесите на разные системы."))
+    elif len(groups) > 1:
+        vs = [gr["v"] for gr in groups]
+        if (max(vs) - min(vs)) / max(vs) > 0.015:
+            ch.append(("warn", f"Сборки разного напряжения в параллель ({', '.join(f'{v:.1f}' for v in vs)} В): "
+                               f"ток делится неравномерно, одна сборка недозаряжается. Лучше одинаковое число последовательно."))
+        else:
+            ch.append(("info", "Разные сборки в параллель: ток делится по ёмкости и сопротивлению — поставьте каждой "
+                               "свой предохранитель/автомат и одинаковой длины провода до общей шины."))
+    if any(gr["chem"] == "lfp" for gr in groups) and float(s["t_bat"]) < 0:
         ch.append(("err", f"LiFePO4 нельзя заряжать ниже 0°C (у вас {float(s['t_bat']):.0f}°C) — BMS отключит заряд. Нужно тёплое место или подогрев."))
     if s["chem"] == "lead" and float(s["bat_dod"]) > 50:
         ch.append(("warn", f"Свинец при разряде глубже 50% быстро умирает (у вас {float(s['bat_dod']):.0f}%)."))
@@ -113,7 +127,7 @@ def bat_checks(s, c, res, bal):
                         f"({i_inv * c['ri']:.2f} В, {i_inv ** 2 * c['ri']:.0f} Вт). Норма ≤ 1%."))
     ib = c["ilim"]
     if c["builtin"]:
-        who = "инвертор" if ib >= c["iout_tot"] else f"АКБ ({c['bank_ah']:.0f} А·ч × {float(s['bat_c']):g}C)"
+        who = "инвертор" if ib >= c["iout_tot"] else f"АКБ (до {c['bank_ich']:.0f} А)"
         ch.append(("info", f"Заряд АКБ от солнца до {ib:.0f} А (ограничивает {who}); пока АКБ не берёт больше — "
                            f"солнце идёт в дом, остальное пропадает."))
     else:

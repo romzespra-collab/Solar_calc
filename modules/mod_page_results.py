@@ -1,7 +1,8 @@
-"""mod_page_results.py  v1.5.1
+"""mod_page_results.py  v1.7.0
 страницы «Прогноз», «Покрытие дома», «Горсеть», отчёт
 
 Журнал:
+v1.7.0: банк из разных сборок: состав «16S1P LF280K + 16S2P LF105», вес по всем сборкам, в отчёте — состав.
 v1.5.1: АКБ сборками: «4 сборки × 16 последовательно = 64 шт»; совет «докупить» — в сборках.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; поле на k входов MPPT, встроенный MPPT гибрида (нет провода
         MPPT→АКБ, упор в предел мощности PV), отчёт с инвертором и MPPT.
@@ -19,7 +20,7 @@ from .mod_base import MONTHS, MONTHS_S, DAYS, WEATHER, W_KEYS, WEATHER_ADJ, MONT
 from .mod_equipment import CELL_INFO, INVERTER_PRESETS, MPPT_PRESETS
 from .mod_sun import DT
 from .mod_fields import WIRE_S_KEYS, s2d
-from .mod_model import wire_r, sim_point, load_day_wh, soc_series, grid_times, fmt_t, LOSS_ROWS
+from .mod_model import wire_r, sim_point, load_day_wh, soc_series, grid_times, fmt_t, LOSS_ROWS, bank_desc
 from .mod_theme import _OK, _ERR, _WARN, SERIES_COL
 from .mod_widgets import (app_name, app_version, Segmented, Stepper, _lab, _card, _btn, _save_failed, _fmt,
                           Chart, make_table, _item)
@@ -231,10 +232,14 @@ class ResultsPages:
         else:
             self.kpi["bank"][0].setText("нет АКБ")
             self.kpi["bank"][1].setText("Проверьте количество и напряжение АКБ")
+        if len(c["groups"]) > 1:
+            head = f"{len(c['groups'])} разные сборки параллельно: {bank_desc(c)} = {c['units']} шт"
+        elif c["nser"] > 1:
+            head = f"{_packs(c['npar'])} × {c['nser']} шт последовательно ({c['nser']}S{c['npar']}P) = {c['units']} шт"
+        else:
+            head = f"{c['npar']} шт параллельно"
         self.lab_bank.setText(
-            (f"{_packs(c['npar'])} × {c['nser']} шт последовательно ({c['nser']}S{c['npar']}P) = {c['units']} шт"
-             if c["nser"] > 1 else f"{c['npar']} шт параллельно")
-            + f" · {c['bank_v']:.1f} В, {c['bank_ah']:.0f} А·ч, {c['bank_wh'] / 1000:.1f} кВт·ч "
+            head + f" · {c['bank_v']:.1f} В, {c['bank_ah']:.0f} А·ч, {c['bank_wh'] / 1000:.1f} кВт·ч "
               f"(полезно {c['usable_wh'] / 1000:.1f}) · ток заряда до {c['bank_ich']:.0f} А" + self._cell_info(c))
         self.lab_wire.setText(
             f"Сопротивление линий с контактами: панели→MPPT {wire_r(c, 20) * 1000:.0f} мОм"
@@ -535,15 +540,20 @@ class ResultsPages:
             t.setItem(i, 6, _item(fmt_t(b), color=_OK if b is not None else None))
 
     def _cell_info(self, c):
-        inf = CELL_INFO.get(self.s.get("bat_preset"))
-        if not inf:
-            return ""
-        cyc, kg, dims, ir = inf
-        n = c["units"]
-        txt = f"<br>Ресурс ≈{cyc} циклов (паспорт, 25°C)"
-        if kg:
-            txt += f" · {kg:g} кг/шт → {kg * n:.0f} кг · {dims} мм · R {ir} мОм"
-        return txt
+        """Ресурс и вес: у одной сборки — подробно, у разных — общий вес по тем, где он известен."""
+        groups = c["groups"]
+        if len(groups) == 1:
+            inf = CELL_INFO.get(groups[0]["key"])
+            if not inf:
+                return ""
+            cyc, kg, dims, ir = inf
+            txt = f"<br>Ресурс ≈{cyc} циклов (паспорт, 25°C)"
+            if kg:
+                txt += f" · {kg:g} кг/шт → {kg * c['units']:.0f} кг · {dims} мм · R {ir} мОм"
+            return txt
+        kg = [CELL_INFO[gr["key"]][1] * gr["n"] * gr["nser"] for gr in groups
+              if gr["key"] in CELL_INFO and CELL_INFO[gr["key"]][1]]
+        return f"<br>Вес ячеек ≈{sum(kg):.0f} кг" + ("" if len(kg) == len(groups) else " (не у всех сборок известен)") if kg else ""
 
     def _show_balance(self):
         R, s = self.R, self.s
@@ -629,7 +639,7 @@ class ResultsPages:
         for mm in range(12):
             L.append(f"{MONTHS[mm]:<10}" + "".join(f"{res[(mm, w)]['wh'][8] / 1000:>10.2f}" for w in W_KEYS))
         bal = R["bal"]
-        L += ["", f"АКБ: {c['nser']}S{c['npar']}P {c['bank_v']:.1f} В {c['bank_ah']:.0f} А·ч = {c['bank_wh'] / 1000:.1f} кВт·ч (полезно {c['usable_wh'] / 1000:.1f})",
+        L += ["", f"АКБ: {bank_desc(c)} · {c['bank_v']:.1f} В {c['bank_ah']:.0f} А·ч = {c['bank_wh'] / 1000:.1f} кВт·ч (полезно {c['usable_wh'] / 1000:.1f})",
               f"Инвертор: {c['inv_p']:.0f} Вт, КПД {c['inv_eta'] * 100:.0f}%, холостой ход {c['inv_idle']:.0f} Вт × {c['inv_hours']:.0f} ч",
               f"Провода: MPPT→АКБ {s['bw_len']} м {s['bw_s']} мм², АКБ→инвертор {s['iw_len']} м {s['iw_s']} мм²", "",
               f"{'Месяц':<10}{'Нужно':>10}{'Средне':>10}{'Баланс':>10}  кВт·ч/сутки"]
