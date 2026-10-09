@@ -1,7 +1,10 @@
-"""mod_page_settings.py  v1.8.0
+"""mod_page_settings.py  v1.9.0
 Страница «Настройки станции»: карточка «Моя станция» (что стоит), поля, пресеты, реакция на изменения.
 
 Журнал:
+v1.9.0: «Моя станция» — конструктор: шаги (инвертор → АКБ → поля → кабели → дом и сеть), холст со схемой
+        (во главе инвертор, поля на его входах MPPT, отдельные MPPT — к линии АКБ → инвертор, сборки АКБ, дом,
+        сеть), справа — настройки выбранного узла; поля-дубли синхронны с карточками ниже.
 v1.8.0: входы MPPT видны везде: схема «2 входа MPPT × по 9 панелей (9 посл. × 1 пар.)», сколько входов занято
         и свободно; у инвертора — «2 входа MPPT»; строка встроенного MPPT — окно, Voc, ток на вход, занято.
 v1.7.0: «Моя станция» — поля своей ширины (не на всё окно); АКБ: «＋ Другая сборка» — разные АКБ параллельно
@@ -17,17 +20,18 @@ v1.3.0: вынесено из solar_calc.pyw v1.2.1; карточка «Моя �
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QComboBox, QLabel, QLineEdit, QToolButton,
-                               QFrame, QScrollArea)
+from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QComboBox, QLabel, QLineEdit,
+                               QFrame, QScrollArea, QStackedWidget, QPushButton, QButtonGroup)
 
 from .mod_base import log
 from .mod_panels import PANEL_DB, PANEL_SERIES
 from .mod_equipment import INVERTER_DB, INVERTER_SERIES, MPPT_DB, BATTERY_DB, MPPT_PRESETS, inv_is_hybrid
-from .mod_fields import (INPUT_CARDS, INT_KEYS, INV_KEYS, WIRE_S_KEYS, WIRE_RANGE, PRESET_GROUPS, MPPT_MODES,
+from .mod_fields import (INPUT_CARDS, INT_KEYS, INV_KEYS, WIRE_S_KEYS, WIRE_RANGE, PRESET_GROUPS,
                          s2d, d2s)
-from .mod_model import (make_ctx, layouts, layout_status, best_layout, bank_series, bank_groups, layout_text,
-                        inputs_word, plural, field_status, field_label, group_name)
-from .mod_scheme import SchemeView, _dir_word
+from .mod_model import (make_ctx, layouts, layout_status, best_layout, bank_series, layout_text,
+                        inputs_word, plural, field_status, field_label, group_name, wire_r, ampacity,
+                        inv_inputs_used)
+from .mod_constructor import StationCanvas, dir_word as _dir_word
 from .mod_config import BAT_EXTRA_MAX, PV_EXTRA_MAX, CTL_EXTRA_MAX
 from .mod_theme import _OK, _ERR, _WARN
 from .mod_widgets import Toggle, Segmented, NoWheelCombo, Stepper, PresetPicker, _lab, _card, _btn
@@ -71,256 +75,581 @@ class SettingsPage:
             v.addWidget(self.lab_wire)
         return fr
 
+    # ─────────────── конструктор станции ───────────────
+    STEPS = (("① Инвертор", "inv"), ("② АКБ", "bat"), ("③ Поля панелей", "field"), ("④ Кабели", "cable_pv"),
+             ("⑤ Дом и сеть", "house"))
+
     def _station_card(self):
-        fr, v = _card("Моя станция — схема подключения")
-        # рисунок: во главе инвертор, на входах MPPT — поля, отдельные MPPT и АКБ — на шине
-        self.scheme = SchemeView()
-        self.scheme.addField.connect(lambda: self._fx_add("pv"))
-        self.scheme.addCtl.connect(lambda: self._fx_add("ctl"))
-        self.scheme.addBat.connect(self._bat_extra_add)
-        self.scheme.picked.connect(self._scheme_pick)
-        v.addWidget(self.scheme)
-        g = QGridLayout()
-        g.setHorizontalSpacing(10)
-        g.setVerticalSpacing(6)
-        g.setColumnStretch(1, 1)
-        self._st_grid = g
+        """Конструктор: шаги сверху, холст (во главе инвертор), справа — настройки выбранного узла."""
+        fr, v = _card("Моя станция — конструктор")
+        self.w2 = {}                                   # поля-дубли в конструкторе (синхронны с карточками ниже)
+        self._spec = {k: (lab, kind, opt, tip) for _, fields in INPUT_CARDS for k, lab, kind, opt, tip in fields}
+        # шаги
+        top = QHBoxLayout()
+        top.setSpacing(6)
+        self.step_btns = []
+        grp = QButtonGroup(fr)
+        grp.setExclusive(True)
+        for i, (name, kind) in enumerate(self.STEPS):
+            b = QPushButton(name)
+            b.setObjectName("step")
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, kind=kind: self._cons_pick(kind, 0, from_step=True))
+            grp.addButton(b)
+            self.step_btns.append(b)
+            top.addWidget(b)
+            if i < len(self.STEPS) - 1:
+                top.addWidget(_lab("→", "fieldLab"))
+        top.addStretch(1)
+        self.lab_cons_sum = _lab("", "hint")
+        top.addWidget(self.lab_cons_sum)
+        v.addLayout(top)
+        # холст + боковая панель
+        body = QHBoxLayout()
+        body.setSpacing(0)
+        self.canvas = StationCanvas()
+        self.canvas.picked.connect(lambda k, i: self._cons_pick(k, i))
+        self.canvas.add.connect(self._cons_add)
+        self.canvas.remove.connect(self._cons_remove)
+        self.canvas.clone.connect(lambda k, i: self._fx_clone(i))
+        body.addWidget(self.canvas, 1)
+        side = QFrame()
+        side.setObjectName("sidePanel")
+        side.setFixedWidth(360)
+        sv = QVBoxLayout(side)
+        sv.setContentsMargins(14, 12, 14, 12)
+        sv.setSpacing(6)
+        self.side_title = _lab("", "sideTitle")
+        self.side_big = _lab("", "sideBig", True)
+        self.side_big.setTextFormat(Qt.RichText)
+        sv.addWidget(self.side_title)
+        sv.addWidget(self.side_big)
+        self.side_stack = QStackedWidget()
+        sv.addWidget(self.side_stack, 1)
+        body.addWidget(side)
+        v.addLayout(body)
+        self.pages = {}
+        for name, fn in (("inv", self._pg_inv), ("field0", self._pg_field0), ("fx", self._pg_dyn), ("bat0", self._pg_bat0),
+                         ("bx", self._pg_dyn), ("house", self._pg_house), ("grid", self._pg_grid), ("cable", self._pg_cable)):
+            w = fn(name)
+            self.pages[name] = w
+            self.side_stack.addWidget(w)
+        self.sel = ("inv", 0)
+        self.bat_extra_w, self.pv_extra_w, self.ctl_extra_w = [], [], []
+        return fr
 
-        def lab(text, tip):
-            lb = _lab(text, "fieldLab")
-            lb.setToolTip(tip)
-            lb.setMinimumWidth(86)
-            return lb
+    # ── страницы боковой панели ──
+    def _page(self):
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 4, 0, 0)
+        v.setSpacing(6)
+        return w, v
 
-        def hint(rich=False):
-            h = _lab("", "hint", True)
-            h.setMaximumWidth(1100)
-            if rich:
-                h.setTextFormat(Qt.RichText)
-            return h
+    def _cap(self, text):
+        return _lab(text, "fieldLab", True)
 
-        def count(lo, hi, key, tip):
-            st = Stepper(lo, hi, 1, 0, "шт")
-            st.setMaximumWidth(160)
-            st.setToolTip(tip)
-            st.changed.connect(lambda val, k=key: self._on_field(k, val))
-            self.w[key] = st
-            return st
+    def _hint(self, rich=False):
+        h = _lab("", "hint", True)
+        if rich:
+            h.setTextFormat(Qt.RichText)
+        return h
 
-        def head(text):
-            h = _lab(text, "subHead")
-            return h
+    def _count(self, lo, hi, key, tip, suf="шт"):
+        st = Stepper(lo, hi, 1, 0, suf)
+        st.setToolTip(tip)
+        st.changed.connect(lambda val, k=key: self._on_field(k, val))
+        self.w[key] = st
+        return st
 
-        r = 0
-        # ── инвертор ──
-        g.addWidget(head("⚡ Инвертор — во главе"), r, 0, 1, 2)
-        r += 1
-        self.pk_inv = PresetPicker(INVERTER_DB, "Свой инвертор — параметры ниже", series=INVERTER_SERIES, what="инвертор")
+    def _dfield(self, v, key):
+        """Поле-дубль из карточек ниже (тот же ключ s) — с подписью."""
+        lab, kind, opt, tip = self._spec[key]
+        wdg = self._make_field(key, kind, opt, dup=True)
+        wdg.setToolTip(tip)
+        v.addWidget(self._cap(lab))
+        v.addWidget(wdg)
+        return wdg
+
+    def _pg_inv(self, name):
+        w, v = self._page()
+        self.pk_inv = PresetPicker(INVERTER_DB, "Свой инвертор — параметры в карточках ниже", series=INVERTER_SERIES,
+                                   what="инвертор", vertical=True)
         self.pk_inv.changed.connect(lambda k: self._on_field("inv_preset", k))
         self.w["inv_preset"] = self.pk_inv
-        g.addWidget(lab("Инвертор", "Инвертор: гибрид (MPPT внутри) или без MPPT"), r, 0)
-        g.addLayout(self._row((self.pk_inv, 10)), r, 1)
-        r += 1
-        self.lab_inv = hint()
-        g.addWidget(self.lab_inv, r, 1)
-        r += 1
-        self.seg_mppt = Segmented(MPPT_MODES)
+        v.addWidget(self._cap("Инвертор: производитель → напряжение АКБ → модель"))
+        v.addWidget(self.pk_inv)
+        self.lab_inv = self._hint()
+        v.addWidget(self.lab_inv)
+        v.addWidget(self._cap("MPPT"))
+        self.seg_mppt = Segmented((("builtin", "Встроенный"), ("separate", "Отдельный")))
         self.seg_mppt.setToolTip("Гибридный инвертор — MPPT встроен; к инвертору без MPPT нужен отдельный контроллер")
-        self.seg_mppt.setMaximumWidth(420)
         self.seg_mppt.changed.connect(lambda k: self._on_field("mppt_mode", k))
         self.w["mppt_mode"] = self.seg_mppt
-        self.pk_mppt = PresetPicker(MPPT_DB, "Свой контроллер — параметры ниже", what="контроллер")
+        v.addWidget(self.seg_mppt)
+        self.pk_mppt = PresetPicker(MPPT_DB, "Свой контроллер — параметры ниже", what="контроллер", vertical=True)
         self.pk_mppt.changed.connect(lambda k: self._on_field("m_preset", k))
         self.w["m_preset"] = self.pk_mppt
-        self.lab_x2 = _lab("×", "fieldLab")
-        g.addWidget(lab("MPPT", "Солнечный контроллер заряда: встроенный в инвертор или отдельный"), r, 0)
-        g.addLayout(self._row((self.seg_mppt, 4), (self.pk_mppt, 10), self.lab_x2,
-                              count(1, 12, "n_mppt_max", "Сколько контроллеров (или входов MPPT у своего инвертора)")), r, 1)
-        r += 1
-        self.lab_mppt = hint()
-        g.addWidget(self.lab_mppt, r, 1)
-        r += 1
-        # ── панели на входах MPPT ──
-        self.head_pv = head("☀ Панели на входах MPPT")
-        g.addWidget(self.head_pv, r, 0, 1, 2)
-        r += 1
-        self.pk_pan = PresetPicker(PANEL_DB, "Своя панель — паспорт ниже", series=PANEL_SERIES, what="панель")
+        v.addWidget(self.pk_mppt)
+        self.lab_x2 = self._cap("Сколько контроллеров / входов MPPT")
+        v.addWidget(self.lab_x2)
+        v.addWidget(self._count(1, 12, "n_mppt_max", "Сколько контроллеров (или входов MPPT у своего инвертора)"))
+        self.lab_mppt = self._hint()
+        v.addWidget(self.lab_mppt)
+        v.addWidget(self._hint())
+        v.addStretch(1)
+        return w
+
+    def _pg_field0(self, name):
+        w, v = self._page()
+        self.pk_pan = PresetPicker(PANEL_DB, "Своя панель — паспорт ниже", series=PANEL_SERIES, what="панель", vertical=True)
         self.pk_pan.setToolTip("Производитель → серия → мощность; 🔎 — поиск по всей базе. Подставит паспорт")
         self.pk_pan.changed.connect(lambda k: self._on_field("p_preset", k))
         self.w["p_preset"] = self.pk_pan
-        self.lab_in1 = lab("Вход 1", "Основное поле: панели, количество и схема. Угол и азимут — в «Место и ориентация»")
-        g.addWidget(self.lab_in1, r, 0)
-        g.addLayout(self._row((self.pk_pan, 10), _lab("×", "fieldLab"), count(1, 300, "n_pan", "Сколько панелей в этом поле")), r, 1)
-        r += 1
-        self.lab_total = hint()
-        g.addWidget(self.lab_total, r, 1)
-        r += 1
+        v.addWidget(self._cap("Панели: производитель → серия → мощность"))
+        v.addWidget(self.pk_pan)
+        v.addWidget(self._cap("Сколько панелей в поле"))
+        v.addWidget(self._count(1, 300, "n_pan", "Сколько панелей в этом поле"))
+        self.lab_total = self._hint()
+        v.addWidget(self.lab_total)
+        v.addWidget(self._cap("Схема поля"))
         self.cb_layout = NoWheelCombo()
-        self.cb_layout.setToolTip("Как соединены панели этого поля: последовательно × параллельно, на сколько входов MPPT")
-        self.cb_layout.setMinimumWidth(260)
-        self.cb_layout.setMaximumWidth(520)
+        self.cb_layout.setToolTip("Как соединены панели: последовательно × параллельно, на сколько входов MPPT")
         self.cb_layout.currentIndexChanged.connect(self._on_layout)
-        g.addWidget(lab("Схема", "Соединение панелей основного поля"), r, 0)
-        g.addLayout(self._row((self.cb_layout, 10), _btn("★ Лучшая", "chip", "Подобрать схему с наибольшей выработкой без ошибок",
-                                                         lambda: self._fit_layout(force=True, announce=True))), r, 1)
-        r += 1
-        self.lab_layout = hint(True)
-        g.addWidget(self.lab_layout, r, 1)
-        r += 1
-        self.lay_pv_extra = QVBoxLayout()
-        self.lay_pv_extra.setSpacing(8)
-        g.addLayout(self.lay_pv_extra, r, 0, 1, 2)
-        r += 1
-        self.btn_pv_add = _btn("＋ Поле на вход 2", "chip", "Другое поле панелей (другие панели, количество, угол или "
-                               "сторона) — на следующий свободный вход MPPT", lambda: self._fx_add("pv"))
-        self.lab_pv_free = _lab("", "hint")
-        g.addLayout(self._row(self.btn_pv_add, self.lab_pv_free), r, 1)
-        r += 1
-        # ── отдельные MPPT-контроллеры на шине АКБ ──
-        g.addWidget(head("🔀 Отдельные MPPT-контроллеры на АКБ (со своими полями)"), r, 0, 1, 2)
-        r += 1
-        self.lay_ctl_extra = QVBoxLayout()
-        self.lay_ctl_extra.setSpacing(8)
-        g.addLayout(self.lay_ctl_extra, r, 0, 1, 2)
-        r += 1
-        self.btn_ctl_add = _btn("＋ Отдельный MPPT с полем", "chip", "Контроллер заряда прямо на АКБ со своими панелями — "
-                                "работает вместе с инвертором, до 6 шт", lambda: self._fx_add("ctl"))
-        g.addLayout(self._row(self.btn_ctl_add, _lab("контроллер прямо на АКБ — до 6 шт, у каждого свои панели", "hint")), r, 1)
-        r += 1
-        # ── АКБ × сборок; ниже — другие сборки (разные АКБ параллельно) ──
-        g.addWidget(head("🔋 АКБ на шине"), r, 0, 1, 2)
-        r += 1
-        self.pk_bat = PresetPicker(BATTERY_DB, "Свои АКБ — параметры ниже", what="АКБ")
-        self.pk_bat.changed.connect(lambda k: self._on_field("bat_preset", k))
-        self.pk_bat.extra_menu = lambda m: m.addAction("＋ Добавить другую сборку", self._bat_extra_add)
-        self.w["bat_preset"] = self.pk_bat
-        g.addWidget(lab("Сборка 1", "Аккумуляторы: основная сборка; другие — кнопкой «＋ Другая сборка»"), r, 0)
-        g.addLayout(self._row((self.pk_bat, 10), _lab("×", "fieldLab"),
-                              count(1, 10, "bat_packs", "Сколько таких сборок (или готовых АКБ) параллельно, до 10. Сколько "
-                                                        "штук последовательно в сборке — по напряжению системы, считается само")), r, 1)
-        r += 1
-        self.lay_bat_extra = QVBoxLayout()
-        self.lay_bat_extra.setSpacing(6)
-        self.bat_extra_w = []
-        g.addLayout(self.lay_bat_extra, r, 1)
-        r += 1
-        self.btn_bat_add = _btn("＋ Другая сборка", "chip", "Есть ещё АКБ другого типа или ёмкости — добавьте их сюда. "
-                                "Все сборки стоят параллельно на одном напряжении системы", self._bat_extra_add)
-        g.addLayout(self._row(self.btn_bat_add, _lab("разные АКБ параллельно на одной шине — до 5 других сборок", "hint")), r, 1)
-        r += 1
-        self.lab_bank = hint(True)
-        g.addWidget(self.lab_bank, r, 1)
-        v.addLayout(g)
-        self.pv_extra_w, self.ctl_extra_w = [], []
-        return fr
-
-    @staticmethod
-    def _row(*items):
-        """Строка: поля своей ширины слева, справа пусто (поля с весом 10 растут до своего предела)."""
+        v.addWidget(self.cb_layout)
+        v.addWidget(_btn("★ Лучшая схема", "chip", "Подобрать схему с наибольшей выработкой без ошибок",
+                         lambda: self._fit_layout(force=True, announce=True)))
+        self.lab_layout = self._hint(True)
+        v.addWidget(self.lab_layout)
         h = QHBoxLayout()
-        h.setSpacing(6)
-        for it in items:
-            if isinstance(it, tuple):
-                h.addWidget(*it)
-            else:
-                h.addWidget(it)
+        for key in ("tilt", "aspect"):
+            vv = QVBoxLayout()
+            self._dfield(vv, key)
+            h.addLayout(vv)
+        v.addLayout(h)
+        v.addStretch(1)
+        h = QHBoxLayout()
+        h.addWidget(_btn("⧉ Копия поля", "chip", "Ещё такое же поле на следующий вход", lambda: self._fx_clone(0)))
         h.addStretch(1)
-        return h
+        v.addLayout(h)
+        return w
 
-    # ─────────────── другие поля панелей: на входах инвертора и на отдельных MPPT ───────────────
-    def _fx_key(self, kind):
-        return "pv_extra" if kind == "pv" else "ctl_extra"
+    def _pg_dyn(self, name):
+        w, v = self._page()
+        box = QVBoxLayout()
+        box.setSpacing(6)
+        v.addLayout(box)
+        v.addStretch(1)
+        setattr(self, f"box_{name}", box)
+        return w
 
-    def _fx_rows(self):
-        """Строки других полей — по s["pv_extra"] и s["ctl_extra"]."""
-        for kind, lay in (("pv", self.lay_pv_extra), ("ctl", self.lay_ctl_extra)):
-            while lay.count():
-                it = lay.takeAt(0)
-                old = it.widget()
-                if old is not None:
-                    old.hide()
-                    old.setParent(None)
-                    old.deleteLater()
-            rows = []
-            for i, it in enumerate(self.s.get(self._fx_key(kind)) or []):
-                w, parts = self._fx_row(kind, i, it)
-                lay.addWidget(w)
-                rows.append(parts)
-            if kind == "pv":
-                self.pv_extra_w = rows
+    def _pg_bat0(self, name):
+        w, v = self._page()
+        self.pk_bat = PresetPicker(BATTERY_DB, "Свои АКБ — параметры в карточке ниже", what="АКБ", vertical=True)
+        self.pk_bat.changed.connect(lambda k: self._on_field("bat_preset", k))
+        self.pk_bat.extra_menu = lambda m: m.addAction("＋ Другая сборка", lambda: self._cons_add("bat"))
+        self.w["bat_preset"] = self.pk_bat
+        v.addWidget(self._cap("АКБ / ячейки"))
+        v.addWidget(self.pk_bat)
+        v.addWidget(self._cap("Сколько таких сборок параллельно"))
+        v.addWidget(self._count(1, 10, "bat_packs", "Сколько таких сборок (или готовых АКБ) параллельно, до 10. Сколько "
+                                                    "штук последовательно — по напряжению системы, считается само", "сб."))
+        self.lab_bank = self._hint(True)
+        v.addWidget(self.lab_bank)
+        v.addStretch(1)
+        h = QHBoxLayout()
+        self.btn_bat_add = _btn("＋ Другая сборка", "chip", "АКБ другого типа на ту же шину", lambda: self._cons_add("bat"))
+        h.addWidget(self.btn_bat_add)
+        h.addStretch(1)
+        v.addLayout(h)
+        return w
+
+    def _pg_house(self, name):
+        w, v = self._page()
+        for key in ("load_mode", "load_kwh", "load_winter", "load_profile"):
+            self._dfield(v, key)
+        self.lab_house = self._hint(True)
+        v.addWidget(self.lab_house)
+        v.addStretch(1)
+        return w
+
+    def _pg_grid(self, name):
+        w, v = self._page()
+        for key in ("grid_mode", "back_soc", "tariff"):
+            self._dfield(v, key)
+        self.lab_grid = self._hint(True)
+        v.addWidget(self.lab_grid)
+        v.addStretch(1)
+        return w
+
+    def _pg_cable(self, name):
+        w, v = self._page()
+        sa = QScrollArea()
+        sa.setWidgetResizable(True)
+        sa.setFrameShape(QFrame.NoFrame)
+        inner = QWidget()
+        iv = QVBoxLayout(inner)
+        iv.setContentsMargins(0, 0, 4, 0)
+        iv.setSpacing(5)
+        self.cab_pv = _lab("Кабель панели → инвертор", "subHead")
+        iv.addWidget(self.cab_pv)
+        for key in ("wire_len", "wire_s", "wire_mat", "n_main", "contact"):
+            self._dfield(iv, key)
+        self.cab_bw = _lab("Кабель контроллер → АКБ", "subHead")
+        iv.addWidget(self.cab_bw)
+        self.cab_bw_w = [self.cab_bw]
+        for key in ("bw_len", "bw_s", "bw_mat"):
+            wd = self._dfield(iv, key)
+            self.cab_bw_w += [iv.itemAt(iv.count() - 2).widget(), wd]
+        iv.addWidget(_lab("Кабель АКБ → инвертор", "subHead"))
+        for key in ("iw_len", "iw_s", "iw_mat"):
+            self._dfield(iv, key)
+        self.lab_wire2 = self._hint()
+        iv.addWidget(self.lab_wire2)
+        iv.addStretch(1)
+        sa.setWidget(inner)
+        v.addWidget(sa, 1)
+        return w
+
+    # ── выбор узла ──
+    def _cons_pick(self, kind, idx, from_step=False):
+        s = self.s
+        c = make_ctx(s)
+        if kind == "bat" and from_step:
+            idx = 0
+        if kind == "ctl":                               # контроллер: свой (доп.) — страница поля; основной — инвертор/MPPT
+            fc = c["fields"][idx] if idx < len(c["fields"]) else None
+            kind = "field" if (fc is not None and (fc["ctl"] or idx > 0)) else "inv"
+            idx = idx if kind == "field" else 0
+        self.sel = (kind, idx)
+        self.canvas.select(kind, idx)
+        step = {"inv": 0, "bat": 1, "field": 2, "cable_pv": 3, "cable_bus": 3, "cable_ctl": 3, "house": 4, "grid": 4}.get(kind)
+        if step is not None:
+            self.step_btns[step].setChecked(True)
+        if kind == "inv":
+            self.side_stack.setCurrentWidget(self.pages["inv"])
+        elif kind == "field":
+            if idx == 0:
+                self.side_stack.setCurrentWidget(self.pages["field0"])
             else:
-                self.ctl_extra_w = rows
+                self._fx_page(c, idx)
+                self.side_stack.setCurrentWidget(self.pages["fx"])
+        elif kind == "bat":
+            if idx == 0 or idx >= len(c["groups"]):
+                self.sel = ("bat", 0)
+                self.canvas.select("bat", 0)
+                self.side_stack.setCurrentWidget(self.pages["bat0"])
+            else:
+                self._bx_page(idx)
+                self.side_stack.setCurrentWidget(self.pages["bx"])
+        elif kind in ("house", "grid"):
+            self.side_stack.setCurrentWidget(self.pages[kind])
+        elif kind.startswith("cable"):
+            self.side_stack.setCurrentWidget(self.pages["cable"])
+        self._side_sync(c)
 
-    def _fx_row(self, kind, i, it):
-        """Одно поле: [подпись] [контроллер — для отдельного MPPT] / панель × схема, угол, азимут, ✕ / проверка."""
-        w = QFrame()
-        w.setObjectName("card")
-        v = QVBoxLayout(w)
-        v.setContentsMargins(10, 8, 10, 8)
-        v.setSpacing(5)
-        top = QHBoxLayout()
-        top.setSpacing(6)
-        title = _lab("", "fieldLab")
-        title.setMinimumWidth(86)
-        top.addWidget(title)
-        mp = None
+    def _clear(self, box):
+        while box.count():
+            it = box.takeAt(0)
+            wd = it.widget()
+            if wd is not None:
+                wd.hide()
+                wd.setParent(None)
+                wd.deleteLater()
+            elif it.layout() is not None:
+                self._clear(it.layout())
+
+    def _fx_where(self, c, idx):
+        """Поле idx → («pv» | «ctl», номер в своём списке)."""
+        fc = c["fields"][idx]
+        kind = "ctl" if fc["ctl"] else "pv"
+        same = [i for i, f in enumerate(c["fields"]) if i > 0 and bool(f["ctl"]) == bool(fc["ctl"])]
+        return kind, same.index(idx)
+
+    def _fx_page(self, c, idx):
+        """Страница другого поля: (контроллер) / панели / схема / ориентация / проверка / копия, убрать."""
+        box = self.box_fx
+        self._clear(box)
+        kind, j = self._fx_where(c, idx)
+        it = (self.s.get(self._fx_key(kind)) or [])[j]
         if kind == "ctl":
-            mp = PresetPicker(MPPT_DB, "", what="контроллер", allow_custom=False)
+            box.addWidget(self._cap("MPPT-контроллер (к линии АКБ → инвертор)"))
+            mp = PresetPicker(MPPT_DB, "", what="контроллер", allow_custom=False, vertical=True)
             mp.setValue(it["mppt"])
-            mp.setToolTip("Какой MPPT-контроллер стоит на этом поле")
-            mp.changed.connect(lambda k, i=i: self._fx_set("ctl", i, mppt=k))
-            top.addWidget(mp, 10)
-        rm = QToolButton()
-        rm.setText("✕")
-        rm.setObjectName("stepBtn")
-        rm.setCursor(Qt.PointingHandCursor)
-        rm.setToolTip("Убрать это поле")
-        rm.clicked.connect(lambda _=False, i=i, kind=kind: self._fx_del(kind, i))
-        if kind == "pv":
-            top.addStretch(1)
-        top.addWidget(rm)
-        v.addLayout(top)
-        pk = PresetPicker(PANEL_DB, "", series=PANEL_SERIES, what="панель", allow_custom=False)
+            mp.changed.connect(lambda k, j=j: self._fx_set("ctl", j, mppt=k))
+            box.addWidget(mp)
+        box.addWidget(self._cap("Панели: производитель → серия → мощность"))
+        pk = PresetPicker(PANEL_DB, "", series=PANEL_SERIES, what="панель", allow_custom=False, vertical=True)
         pk.setValue(it["preset"])
-        pk.changed.connect(lambda k, i=i, kind=kind: self._fx_set(kind, i, preset=k))
+        pk.changed.connect(lambda k, j=j, kind=kind: self._fx_set(kind, j, preset=k))
+        box.addWidget(pk)
 
-        def step(lo, hi, val, suf, key, tip, dec=0, stp=1):
-            st = Stepper(lo, hi, stp, dec, suf)
-            st.setMaximumWidth(130)
+        def step(lo, hi, val, suf, key, tip, stp=1):
+            st = Stepper(lo, hi, stp, 0, suf)
             st.setValue(val)
             st.setToolTip(tip)
-            st.changed.connect(lambda x, i=i, kind=kind, key=key: self._fx_set(kind, i, **{key: int(round(x)) if dec == 0 and key in ("ns", "np") else x}))
+            st.changed.connect(lambda x, j=j, kind=kind, key=key: self._fx_set(kind, j, **{key: int(round(x)) if key in ("ns", "np") else x}))
             return st
-        ns = step(1, 40, it["ns"], "посл.", "ns", "Панелей последовательно в цепочке")
-        np_ = step(1, 30, it["np"], "пар.", "np", "Цепочек параллельно на этот вход")
-        tl = step(0, 90, it["tilt"], "°", "tilt", "Угол наклона панелей этого поля", 0, 1)
-        az = step(-180, 180, it["aspect"], "°", "aspect", "Азимут: 0 — юг, −90 — восток, +90 — запад", 0, 5)
-        line = QHBoxLayout()
-        line.setSpacing(6)
-        line.addWidget(_lab("панели", "fieldLab"))
-        line.addWidget(pk, 10)
-        line.addWidget(ns)
-        line.addWidget(_lab("×", "fieldLab"))
-        line.addWidget(np_)
-        line.addWidget(_lab("угол", "fieldLab"))
-        line.addWidget(tl)
-        line.addWidget(_lab("азимут", "fieldLab"))
-        line.addWidget(az)
-        line.addStretch(1)
-        v.addLayout(line)
-        st = _lab("", "hint", True)
-        st.setTextFormat(Qt.RichText)
-        v.addWidget(st)
+        box.addWidget(self._cap("Схема поля: последовательно × параллельно"))
+        h = QHBoxLayout()
+        h.addWidget(step(1, 40, it["ns"], "посл.", "ns", "Панелей последовательно в цепочке"))
+        h.addWidget(step(1, 30, it["np"], "пар.", "np", "Цепочек параллельно"))
+        box.addLayout(h)
+        box.addWidget(self._cap("Угол и азимут (0 — юг, −90 — восток, +90 — запад)"))
+        h = QHBoxLayout()
+        h.addWidget(step(0, 90, it["tilt"], "° угол", "tilt", "Угол наклона панелей этого поля"))
+        h.addWidget(step(-180, 180, it["aspect"], "° азимут", "aspect", "Азимут поля", 5))
+        box.addLayout(h)
+        self.fx_status = self._hint(True)
+        box.addWidget(self.fx_status)
+        h = QHBoxLayout()
+        h.addWidget(_btn("⧉ Копия поля", "chip", "Ещё такое же поле", lambda idx=idx: self._fx_clone(idx)))
+        h.addWidget(_btn("🗑 Убрать", "chip", "Убрать это поле", lambda idx=idx: self._cons_remove("field", idx)))
+        h.addStretch(1)
+        box.addLayout(h)
 
-        def menu(m, i=i, kind=kind):
-            m.addAction("🗑 Убрать это поле", lambda: self._fx_del(kind, i))
-            m.addAction("＋ Ещё поле", lambda: self._fx_add(kind))
-        pk.extra_menu = menu
-        if mp is not None:
-            mp.extra_menu = menu
-        w.setContextMenuPolicy(Qt.CustomContextMenu)
-        w.customContextMenuRequested.connect(lambda pos, w=w, pk=pk: pk._menu(w.mapToGlobal(pos)))
-        return w, dict(frame=w, title=title, status=st, pk=pk, mp=mp)
+    def _bx_page(self, j):
+        """Страница другой сборки АКБ."""
+        box = self.box_bx
+        self._clear(box)
+        it = (self.s.get("bat_extra") or [])[j - 1]
+        box.addWidget(self._cap("АКБ / ячейки"))
+        pk = PresetPicker(BATTERY_DB, "", what="АКБ", allow_custom=False, vertical=True)
+        pk.setValue(it["preset"])
+        pk.changed.connect(lambda k, i=j - 1: self._bat_extra_set(i, preset=k))
+        box.addWidget(pk)
+        box.addWidget(self._cap("Сколько таких сборок параллельно"))
+        st = Stepper(1, 10, 1, 0, "сб.")
+        st.setValue(it["n"])
+        st.changed.connect(lambda x, i=j - 1: self._bat_extra_set(i, n=int(round(x))))
+        box.addWidget(st)
+        self.bx_step = st
+        self.bx_hint = self._hint()
+        box.addWidget(self.bx_hint)
+        h = QHBoxLayout()
+        h.addWidget(_btn("＋ Ещё сборка", "chip", "Другая сборка АКБ", lambda: self._cons_add("bat")))
+        h.addWidget(_btn("🗑 Убрать", "chip", "Убрать эту сборку", lambda j=j: self._cons_remove("bat", j)))
+        h.addStretch(1)
+        box.addLayout(h)
+
+    def _side_sync(self, c=None):
+        """Заголовок боковой панели и проверка выбранного узла."""
+        s = self.s
+        c = c or make_ctx(s)
+        kind, idx = self.sel
+        tmin, tmax = float(s["t_min"]), float(s["t_max"])
+        big = ""
+        if kind == "inv":
+            title = "⚡ Инвертор"
+            big = f"{c['inv_p'] / 1000:g} кВт · АКБ {s['bat_v']} В"
+        elif kind == "field" and idx < len(c["fields"]):
+            fc = c["fields"][idx]
+            lvl, msg, n = field_status(fc, tmin, tmax)
+            lab = field_label(c, idx)
+            title = f"☀ Поле {idx + 1} → {lab}"
+            big = f"<span style='color:{LVL_COL[lvl]}'>{fc['pstc_tot'] / 1000:.2f} кВт · {LVL_ICON[lvl]} {msg or 'в норме'}</span>"
+            if idx > 0 and getattr(self, "fx_status", None) is not None:
+                try:
+                    self.fx_status.setText(
+                        f"{fc['npan']} {plural(fc['npan'], 'панель', 'панели', 'панелей')} · Vmp {n['vmp']:.0f} В "
+                        f"(окно {fc['vin_min']:.0f}–{fc['vmpp_max']:g} В) · Voc на морозе {n['voc_cold']:.0f} В "
+                        f"(до {fc['v_max']:g} В) · ток {n['i']:.1f} А" + (f" (до {fc['iin_max']:g} А)" if fc["iin_max"] else ""))
+                except RuntimeError:
+                    pass
+        elif kind == "bat":
+            gr = c["groups"][min(idx, len(c["groups"]) - 1)]
+            title = f"🔋 Сборка {idx + 1}"
+            big = f"{gr['n'] * gr['ah'] * gr['v'] / 1000:.1f} кВт·ч · {gr['nser']}S × {gr['n']}"
+            if idx > 0 and getattr(self, "bx_hint", None) is not None:
+                try:
+                    self.bx_step.reconfigure(1, 10, 1, 0, "сб." if gr["nser"] > 1 else "шт")
+                    self.bx_step.setValue(gr["n"])
+                    self.bx_hint.setText(f"{gr['nser']} шт последовательно — по напряжению {s['bat_v']} В (само) · "
+                                         f"{gr['v']:.1f} В, {gr['n'] * gr['ah']:.0f} А·ч · заряд до {gr['n'] * gr['ah'] * gr['c']:.0f} А")
+                except RuntimeError:
+                    pass
+        elif kind == "house":
+            title = "🏠 Дом"
+            big = f"≈{c['load_month']:.0f} кВт·ч в месяц"
+        elif kind == "grid":
+            title = "🔌 Горсеть"
+            big = "есть" if s.get("grid_mode") == "backup" else "нет / отключают"
+        else:
+            title = "〰 Кабели"
+            big = f"панели {float(s['wire_s']):g} мм² · АКБ {float(s['iw_s']):g} мм²"
+        self.side_title.setText(title)
+        self.side_big.setText(big)
+
+    # ── данные холста ──
+    def _cable_pv(self, fc):
+        i = fc["np"] * fc["imp"]
+        r20 = wire_r(fc, 20)
+        du = i * r20 / max(1.0, fc["ns"] * fc["vmp"]) * 100
+        lvl = "ok" if du <= 2 else "warn" if du <= 5 else "err"
+        return f"{float(self.s['wire_s']):g} мм² · {float(self.s['wire_len']):g} м · −{du:.1f}%", lvl
+
+    def _bus_lvl(self, c):
+        """Кабель АКБ → инвертор (как в проверках): ток на полной мощности, допустимый ток, падение."""
+        s = self.s
+        i_inv = c["inv_p"] / max(0.5, c["inv_eta"]) / (c["sys_nom"] * 0.95)
+        if i_inv * 1.25 > ampacity(float(s["iw_s"]), s["iw_mat"]):
+            return "err", i_inv
+        du = i_inv * c["ri"] / c["sys_nom"] * 100
+        return ("ok" if du <= 1 else "warn" if du <= 2 else "err"), i_inv
+
+    def _graph(self, c):
+        """Узлы и связи для холста + текст схемы."""
+        s = self.s
+        tmin, tmax = float(s["t_min"]), float(s["t_max"])
+        builtin = c["builtin"]
+        nports = int(s["n_mppt_max"])
+        d_inv = INVERTER_DB.get(s.get("inv_preset"))
+        inv_name = (d_inv[1] if d_inv[0] == "Типовые" else f"{d_inv[0]} {d_inv[1]}") if d_inv else "Свой инвертор"
+        mdb = MPPT_DB.get(s.get("m_preset"))
+        A, B, lines = [], [], [f"Инвертор: {inv_name}, {c['inv_p'] / 1000:g} кВт, АКБ {s['bat_v']} В"]
+        port = 0
+        for i, fc in enumerate(c["fields"]):
+            lvl, msg, n = field_status(fc, tmin, tmax)
+            d = PANEL_DB.get(fc["key"])
+            pname = (f"{d[0] if d[0] != 'Типовые' else 'панели'} {fc['pmax']:g} Вт" if d else f"панели {fc['pmax']:g} Вт")
+            lab = field_label(c, i)
+            mark = LVL_ICON[lvl]
+            flines = [f"Поле {i + 1} → {lab.split(' (')[0]}", f"{fc['npan']} × {pname}",
+                      f"{fc['ns']}S × {fc['np']}P" + (f" × {fc['k']} вх." if fc["k"] > 1 else "") + f" · {fc['tilt']:g}° {_dir_word(fc['aspect'])}",
+                      (f"{mark} Vmp {n['vmp']:.0f} В · {n['i']:.1f} А", LVL_COL[lvl])]
+            cab, clvl = self._cable_pv(fc)
+            tip = f"Поле {i + 1} → {lab}: {fc['npan']} × {pname}\nVmp {n['vmp']:.0f} В, Voc на морозе {n['voc_cold']:.0f} В, " \
+                  f"ток {n['i']:.1f} А — {mark} {msg or 'в норме'}"
+            item = dict(idx=i, big=f"{fc['pstc_tot'] / 1000:.2f} кВт", lines=flines, lvl=lvl if clvl == "ok" else
+                        ("err" if "err" in (lvl, clvl) else "warn"), cable=cab, tip=tip)
+            lines.append(f"  Поле {i + 1} → {lab}: {fc['npan']} × {pname}, {fc['ns']}S×{fc['np']}P, "
+                         f"{fc['pstc_tot'] / 1000:.2f} кВт, {fc['tilt']:g}° {_dir_word(fc['aspect'])} — {mark} {msg or 'в норме'}")
+            if builtin and not fc["ctl"]:
+                item.update(port=port, k=fc["k"])
+                port += fc["k"]
+                A.append(item)
+            else:
+                md = MPPT_DB.get(fc["ctl"]) if fc["ctl"] else mdb
+                cname = md[1] if md else "свой контроллер"
+                item["ctl"] = dict(big=f"{fc['iout']:.0f} А", lines=[cname, f"Voc ≤ {fc['v_max']:g} В", f"КПД {fc['eta'] * 100:.0f}%"],
+                                   tip=f"{lab}: {cname}, заряд до {fc['iout']:.0f} А")
+                item["cable2"] = f"{float(s['bw_s']):g} мм² · {float(s['bw_len']):g} м"
+                B.append(item)
+        groups = c["groups"]
+        bats = []
+        for j, gr in enumerate(groups):
+            kwh = gr["n"] * gr["ah"] * gr["v"] / 1000
+            bats.append(dict(big=f"{kwh:.1f} кВт·ч", lines=[f"Сборка {j + 1} · {gr['nser']}S × {gr['n']}", group_name(gr),
+                                                           (f"полезно {kwh * gr['dod'] / 100:.1f}", _OK)],
+                             tip=f"Сборка {j + 1}: {gr['nser']} шт последовательно × {gr['n']} параллельно"))
+            lines.append(f"АКБ {j + 1}: {gr['nser']}S{gr['n']}P {group_name(gr)} — {kwh:.1f} кВт·ч")
+        blvl, i_inv = self._bus_lvl(c)
+        R = getattr(self, "R", None)
+        cover = grid_y = None
+        if R:
+            yg = R.get("ygrid", {}).get("avg")
+            if yg and yg["load"] > 0:
+                cover = (1 - yg["grid_load"] / yg["load"]) * 100
+                grid_y = yg["grid"]
+        used = sum(a["k"] for a in A)
+        return dict(
+            inv=dict(big=f"{c['inv_p'] / 1000:g} кВт", builtin=builtin, ports=nports if builtin else 0,
+                     lines=[inv_name, f"{s['bat_v']} В · " + (inputs_word(nports) if builtin else
+                                                    "MPPT не занят" if inv_is_hybrid(s.get("inv_preset")) else "без MPPT"),
+                            (f"занято {used} из {nports}" if builtin else "панели — через контроллеры",
+                             _OK if (not builtin or used <= nports) else _ERR)],
+                     tip=f"{inv_name}: {c['inv_p'] / 1000:g} кВт, АКБ {s['bat_v']} В"),
+            a=A, b=B, bats=bats,
+            add_a=(f"поле → MPPT {port + 1}" if builtin and port < nports and len(s.get("pv_extra") or []) < PV_EXTRA_MAX else None),
+            add_b=("отдельный MPPT" if len(s.get("ctl_extra") or []) < CTL_EXTRA_MAX else None),
+            add_bat=len(s.get("bat_extra") or []) < BAT_EXTRA_MAX,
+            house=dict(big=f"{c['load_month']:.0f} кВт·ч", lines=["в месяц · AC 230 В"] + ([f"закрыто станцией {cover:.0f}%"] if cover is not None else [])),
+            grid=dict(big="сеть" if s.get("grid_mode") == "backup" else "нет сети", on=s.get("grid_mode") == "backup",
+                      lines=[f"{float(s['tariff']):g} грн/кВт·ч"] + ([f"≈{grid_y:.0f} кВт·ч/год"] if grid_y is not None else [])),
+            bus=dict(text=f"{float(s['iw_s']):g} мм² · {float(s['iw_len']):g} м · {i_inv:.0f} А" + {"ok": "", "warn": " ⚠", "err": " ✗"}[blvl],
+                     lvl=blvl),
+            bus_v=f"шина АКБ {c['bank_v']:.1f} В", ac_text=f"AC 230 В · {c['inv_p'] / 1000:g} кВт",
+            text="\n".join(lines))
+
+    def _cons_update(self, c=None):
+        c = c or make_ctx(self.s)
+        self.canvas.set_data(self._graph(c), self._p(), dark=self.cfg.get("theme", "dark") == "dark")
+        # шаги: цвет по проверке
+        s = self.s
+        tmin, tmax = float(s["t_min"]), float(s["t_max"])
+        fl = [field_status(fc, tmin, tmax)[0] for fc in c["fields"]]
+        iv = int(float(s.get("inv_bat_v", 0) or 0))
+        st_inv = "err" if (iv and iv != int(s["bat_v"])) or inv_inputs_used(c) > int(s["n_mppt_max"]) else "ok"
+        st_bat = "err" if c["mismatch_v"] or len({g["chem"] for g in c["groups"]}) > 1 else "ok"
+        st_pv = "err" if "err" in fl else "warn" if "warn" in fl else "ok"
+        cab = [self._cable_pv(fc)[1] for fc in c["fields"]] + [self._bus_lvl(c)[0]]
+        st_cab = "err" if "err" in cab else "warn" if "warn" in cab else "ok"
+        for b, st in zip(self.step_btns, (st_inv, st_bat, st_pv, st_cab, "ok")):
+            if b.property("st") != st:
+                b.setProperty("st", st)
+                b.style().unpolish(b)
+                b.style().polish(b)
+        yr = f" · ≈{self.R['year']['avg']:,.0f} кВт·ч/год".replace(",", " ") if getattr(self, "R", None) else ""
+        self.lab_cons_sum.setText(f"Итог: {c['pstc_tot'] / 1000:.2f} кВт панелей · {c['bank_wh'] / 1000:.1f} кВт·ч АКБ{yr}")
+
+    # ── добавить / убрать / копия ──
+    def _cons_add(self, kind):
+        if kind == "bat":
+            self._bat_extra_add()
+            n = len(self.s.get("bat_extra") or [])
+            if n:
+                self._cons_pick("bat", n)
+            return
+        before = len(self.s.get(self._fx_key(kind)) or [])
+        self._fx_add(kind)
+        after = self.s.get(self._fx_key(kind)) or []
+        if len(after) > before:
+            c = make_ctx(self.s)
+            idx = [i for i, f in enumerate(c["fields"]) if i > 0 and bool(f["ctl"]) == (kind == "ctl")][-1]
+            self._cons_pick("field", idx)
+
+    def _cons_remove(self, kind, idx):
+        if kind == "bat" and idx > 0:
+            self._bat_extra_del(idx - 1)
+            self._cons_pick("bat", 0)
+        elif kind == "field" and idx > 0:
+            c = make_ctx(self.s)
+            k, j = self._fx_where(c, idx)
+            self._fx_del(k, j)
+            self._cons_pick("inv", 0)
+
+    def _fx_clone(self, idx):
+        """Копия поля: основное → ещё одно такое же на следующий вход; другое — ещё такое же в свой список."""
+        s = self.s
+        c = make_ctx(s)
+        if idx == 0:
+            if s.get("mppt_mode") == "builtin" and inv_inputs_used(c) < int(s["n_mppt_max"]):
+                s["n_in"] = int(s["n_in"]) + 1                      # одинаковое поле — ещё на один вход
+                s["n_pan"] = s["n_in"] * int(s["ns"]) * int(s["np"])
+                self._set_widget("n_pan", s["n_pan"])
+                self._refresh_station()
+                self._recalc_timer.start(200)
+            else:
+                self._cons_add("ctl" if s.get("mppt_mode") == "builtin" else "pv")
+            return
+        kind, j = self._fx_where(c, idx)
+        key = self._fx_key(kind)
+        ex = [dict(x) for x in s.get(key) or []]
+        if kind == "pv" and s.get("mppt_mode") == "builtin" and inv_inputs_used(c) >= int(s["n_mppt_max"]):
+            log.warning("⚠ У инвертора все входы MPPT заняты — копия не влезет")
+            return
+        if len(ex) >= (PV_EXTRA_MAX if kind == "pv" else CTL_EXTRA_MAX):
+            return
+        ex.append(dict(ex[j]))
+        s[key] = ex
+        self._refresh_station()
+        self._recalc_timer.start(200)
+        self._cons_pick("field", len(make_ctx(s)["fields"]) - 1 if kind == "ctl" else idx + 1)
+
+    # ─────────────── другие поля: на входах инвертора и на отдельных MPPT ───────────────
+    def _fx_key(self, kind):
+        return "pv_extra" if kind == "pv" else "ctl_extra"
 
     def _fx_set(self, kind, i, **kw):
         key = self._fx_key(kind)
@@ -338,8 +667,8 @@ class SettingsPage:
         if kind == "pv":
             used = int(s["n_in"]) + len(ex)
             if s.get("mppt_mode") == "builtin" and used >= int(s["n_mppt_max"]):
-                log.warning(f"⚠ У инвертора {inputs_word(int(s['n_mppt_max']))} — все заняты. Уберите поле или "
-                            f"поставьте отдельный MPPT (кнопка «＋ Отдельный MPPT с полем»)")
+                log.warning(f"⚠ У инвертора {inputs_word(int(s['n_mppt_max']))} — все заняты. Поставьте отдельный MPPT "
+                            f"на линию АКБ (＋ отдельный MPPT)")
                 return
             if len(ex) >= PV_EXTRA_MAX:
                 return
@@ -359,10 +688,9 @@ class SettingsPage:
         if kind == "pv" and s.get("mppt_mode") != "builtin" and int(s["n_in"]) + len(ex) > int(s["n_mppt_max"]):
             s["n_mppt_max"] = int(s["n_in"]) + len(ex)           # у отдельных контроллеров — ещё один такой же
             self._set_widget("n_mppt_max", s["n_mppt_max"])
-        self._fx_rows()
         self._refresh_station()
         self._recalc_timer.start(200)
-        log.info("＋ Добавлено поле " + ("на вход MPPT" if kind == "pv" else "с отдельным MPPT") + " — выберите панели и схему")
+        log.info("＋ Добавлено поле " + ("на вход MPPT" if kind == "pv" else "с отдельным MPPT на линии АКБ") + " — выберите панели и схему")
 
     def _fx_del(self, kind, i):
         key = self._fx_key(kind)
@@ -370,150 +698,18 @@ class SettingsPage:
         if 0 <= i < len(ex):
             ex.pop(i)
             self.s[key] = ex
-            self._fx_rows()
             self._refresh_station()
             self._recalc_timer.start(200)
 
-    def _scheme_pick(self, kind, idx):
-        """Клик по схеме → к нужной строке."""
+    def _cons_reset(self):
+        """После загрузки профиля: выбранный узел мог исчезнуть — показать заново."""
+        kind, idx = getattr(self, "sel", ("inv", 0))
         c = make_ctx(self.s)
-        target = None
-        if kind == "inv":
-            target = self.pk_inv
-        elif kind == "bat":
-            target = self.pk_bat if idx == 0 else (self.bat_extra_w[idx - 1][0] if idx - 1 < len(self.bat_extra_w) else None)
-        elif kind in ("field", "ctl"):
-            fc = c["fields"][idx] if idx < len(c["fields"]) else None
-            if idx == 0:
-                target = self.pk_pan
-            elif fc is not None and fc["ctl"]:
-                j = sum(1 for f in c["fields"][:idx + 1] if f["ctl"]) - 1
-                if j < len(self.ctl_extra_w):
-                    target = self.ctl_extra_w[j]["mp" if kind == "ctl" else "pk"]
-            else:
-                j = idx - 1
-                if j < len(self.pv_extra_w):
-                    target = self.pv_extra_w[j]["pk"]
-        if target is not None:
-            sa = target.parentWidget()
-            while sa is not None and not isinstance(sa, QScrollArea):
-                sa = sa.parentWidget()
-            if sa is not None:
-                sa.ensureWidgetVisible(target, 40, 80)
-            (getattr(target, "cb_model", None) or target).setFocus()
-
-    def _scheme_data(self):
-        """Данные рисунка схемы подключения из настроек."""
-        s = self.s
-        c = make_ctx(s)
-        tmin, tmax = float(s["t_min"]), float(s["t_max"])
-        builtin = c["builtin"]
-        nports = int(s["n_mppt_max"])
-        d_inv = INVERTER_DB.get(s.get("inv_preset"))
-        inv_name = f"⚡ {d_inv[0] if d_inv[0] != 'Типовые' else ''} {d_inv[1]}".replace("  ", " ") if d_inv else "⚡ Свой инвертор"
-        inv_sub = (f"{c['inv_p'] / 1000:g} кВт · АКБ {s['bat_v']} В · " +
-                   (f"{inputs_word(nports)}" if builtin else "без MPPT — панели через контроллеры"))
-        mdb = MPPT_DB.get(s.get("m_preset"))
-        ports, ctl_rows, lines = [], [], [f"Инвертор: {inv_name[2:]} ({inv_sub})"]
-        port, row = 1, 0
-        for i, fc in enumerate(c["fields"]):
-            lvl, msg, n = field_status(fc, tmin, tmax)
-            d = PANEL_DB.get(fc["key"])
-            pname = (f"{d[0] if d[0] != 'Типовые' else 'панели'} {fc['pmax']:g} Вт" if d else f"панели {fc['pmax']:g} Вт")
-            title = f"☀ {fc['ns'] * fc['np']} × {pname}"
-            sub = (f"{fc['ns']} посл. × {fc['np']} пар. · {fc['ns'] * fc['np'] * fc['pmax'] / 1000:.2f} кВт · "
-                   f"{fc['tilt']:g}° {_dir_word(fc['aspect'])}")
-            wire = f"{n['vmp']:.0f} В · {n['i']:.1f} А"
-            mark = {"ok": "✓", "warn": "⚠", "err": "✗"}[lvl]
-            tip = f"{field_label(c, i)}: {title[2:]}, {sub}\nVmp {n['vmp']:.0f} В, Voc на морозе {n['voc_cold']:.0f} В, " \
-                  f"ток {n['i']:.1f} А — {mark} {msg or 'в норме'}"
-            if fc["ctl"] or not builtin:
-                md = MPPT_DB.get(fc["ctl"]) if fc["ctl"] else mdb
-                cname = md[1] if md else "свой контроллер"
-                kk = fc["k"]
-                ctl_rows.append(dict(idx=i, title=title, sub=sub, lvl=lvl, wire=wire, tip=tip,
-                                     ctl_title=f"🔀 {cname}" + (f" × {kk}" if kk > 1 else ""),
-                                     ctl_sub=f"{field_label(c, i)} · заряд до {fc['iout']:.0f} А",
-                                     ctl_tip=f"{field_label(c, i)}: {cname}, Voc ≤ {fc['v_max']:g} В, заряд до {fc['iout']:.0f} А"))
-                lines.append(f"  {field_label(c, i)}: {title[2:]}, {sub} — {mark} {msg or 'в норме'}")
-            else:
-                for _ in range(fc["k"]):
-                    ports.append(dict(kind="field", row=row, port=port, port_label=f"MPPT {port}", title=title, sub=sub,
-                                      lvl=lvl, wire=wire, tip=tip, idx=i))
-                    lines.append(f"  MPPT {port}: {title[2:]}, {sub} — {mark} {msg or 'в норме'}")
-                    port += 1
-                    row += 1
-        if builtin:
-            for pp in range(port, nports + 1):
-                ports.append(dict(kind="free", row=row, port=pp, port_label=f"MPPT {pp}"))
-                lines.append(f"  MPPT {pp}: свободен")
-                row += 1
-        bats = []
-        for j, gr in enumerate(c["groups"]):
-            kwh = gr["n"] * gr["ah"] * gr["v"] / 1000
-            bats.append(dict(title=f"🔋 {gr['nser']}S × {gr['n']} {group_name(gr)}",
-                             sub=f"{gr['v']:.1f} В · {gr['n'] * gr['ah']:.0f} А·ч · {kwh:.1f} кВт·ч",
-                             tip=f"Сборка {j + 1}: {gr['nser']} шт последовательно × {gr['n']} параллельно"))
-            lines.append(f"АКБ {j + 1}: {gr['nser']}S{gr['n']}P {group_name(gr)} — {kwh:.1f} кВт·ч")
-        return dict(inv=dict(name=inv_name, sub=inv_sub, ports=nports, builtin=builtin,
-                             tip=f"{inv_name[2:]}: {inv_sub}"),
-                    ports=ports, ctl_rows=ctl_rows, bats=bats, bus_v=f"{c['bank_v']:.1f} В",
-                    ctl_head="Отдельные MPPT-контроллеры на шине АКБ" if builtin else "Панели → MPPT-контроллеры → шина АКБ",
-                    house=f"≈{c['load_month']:.0f} кВт·ч/мес",
-                    grid="есть" if s.get("grid_mode") == "backup" else "нет / отключают",
-                    can_add_field=(not builtin) or port <= nports,
-                    can_add_ctl=len(s.get("ctl_extra") or []) < CTL_EXTRA_MAX,
-                    can_add_bat=len(s.get("bat_extra") or []) < BAT_EXTRA_MAX,
-                    text="\n".join(lines))
+        if (kind == "field" and idx >= len(c["fields"])) or (kind == "bat" and idx >= len(c["groups"])):
+            kind, idx = "inv", 0
+        self._cons_pick(kind, idx)
 
     # ─────────────── другие сборки АКБ ───────────────
-    def _bat_extra_rows(self):
-        """Строки «другая сборка» — по s["bat_extra"] (после загрузки профиля, добавления, удаления)."""
-        lay = self.lay_bat_extra
-        while lay.count():
-            it = lay.takeAt(0)
-            old = it.widget()
-            if old is not None:                   # сразу убрать с экрана, удалить — когда окно освободится
-                old.hide()
-                old.setParent(None)
-                old.deleteLater()
-        self.bat_extra_w = []
-        for i, it in enumerate(self.s.get("bat_extra") or []):
-            w = QWidget()
-            h = QHBoxLayout(w)
-            h.setContentsMargins(0, 0, 0, 0)
-            h.setSpacing(6)
-            pk = PresetPicker(BATTERY_DB, "", what="АКБ", allow_custom=False)
-            pk.setValue(it["preset"])
-            pk.setToolTip(f"Сборка {i + 2}: какие АКБ")
-            st = Stepper(1, 10, 1, 0, "сб.")
-            st.setMaximumWidth(160)
-            st.setValue(it["n"])
-            st.setToolTip("Сколько таких сборок параллельно")
-            rm = QToolButton()
-            rm.setText("✕")
-            rm.setObjectName("stepBtn")
-            rm.setCursor(Qt.PointingHandCursor)
-            rm.setToolTip("Убрать эту сборку")
-            h.addWidget(pk, 10)
-            h.addWidget(_lab("×", "fieldLab"))
-            h.addWidget(st)
-            h.addWidget(rm)
-            h.addStretch(1)
-            pk.changed.connect(lambda k, i=i: self._bat_extra_set(i, preset=k))
-            st.changed.connect(lambda val, i=i: self._bat_extra_set(i, n=int(round(val))))
-            rm.clicked.connect(lambda _=False, i=i: self._bat_extra_del(i))
-
-            def menu(m, i=i):
-                m.addAction("🗑 Убрать эту сборку", lambda: self._bat_extra_del(i))
-                m.addAction("＋ Добавить ещё сборку", self._bat_extra_add)
-            pk.extra_menu = menu
-            w.setContextMenuPolicy(Qt.CustomContextMenu)
-            w.customContextMenuRequested.connect(lambda pos, w=w, pk=pk: pk._menu(w.mapToGlobal(pos)))
-            lay.addWidget(w)
-            self.bat_extra_w.append((pk, st))
-        self.btn_bat_add.setEnabled(len(self.s.get("bat_extra") or []) < BAT_EXTRA_MAX)
-
     def _bat_extra_changed(self):
         self._refresh_station()
         self._recalc_timer.start(200)
@@ -532,7 +728,6 @@ class SettingsPage:
         key = self.s.get("bat_preset")
         ex.append(dict(preset=key if key in BATTERY_DB else "eve_lf280k", n=1))
         self.s["bat_extra"] = ex
-        self._bat_extra_rows()
         self._bat_extra_changed()
         log.info(f"＋ Добавлена сборка АКБ {len(ex) + 1} — выберите её тип")
 
@@ -541,7 +736,6 @@ class SettingsPage:
         if 0 <= i < len(ex):
             ex.pop(i)
             self.s["bat_extra"] = ex
-            self._bat_extra_rows()
             self._bat_extra_changed()
 
     def _page_settings(self):
@@ -583,7 +777,8 @@ class SettingsPage:
         inner.customContextMenuRequested.connect(lambda pos: self._inputs_menu(inner.mapToGlobal(pos)))
         return sa
 
-    def _make_field(self, key, kind, opt):
+    def _make_field(self, key, kind, opt, dup=False):
+        """Поле ввода по описанию. dup=True — второе поле того же ключа (в конструкторе), синхронное с первым."""
         if kind == "wire":
             kind, opt = "num", WIRE_RANGE[self.s.get("wire_mode", "s")]
         if kind == "num":
@@ -612,20 +807,26 @@ class SettingsPage:
             for k, (t, _) in opt.items():
                 wdg.addItem(t, k)
             wdg.currentIndexChanged.connect(lambda i, k=key, wd=wdg: self._on_field(k, wd.itemData(i)))
-        self.w[key] = wdg
+        if dup:
+            self.w2.setdefault(key, []).append(wdg)
+        else:
+            self.w[key] = wdg
         return wdg
 
     # ─────────────── значения ───────────────
     def _set_widget(self, key, val):
-        wdg = self.w.get(key)
-        if wdg is None:
-            return
+        for wdg in [self.w.get(key)] + getattr(self, "w2", {}).get(key, []):
+            if wdg is not None:
+                self._set_one(wdg, key, val)
+
+    def _set_one(self, wdg, key, val):
         wdg.blockSignals(True)
         try:
             if isinstance(wdg, Stepper):
                 if key in WIRE_S_KEYS and self.s.get("wire_mode") == "d":
                     val = s2d(val)
-                wdg.setValue(val)
+                if abs(float(wdg.value()) - float(val)) > 1e-9:      # то же — не трогаем (не сбить ввод)
+                    wdg.setValue(val)
             elif isinstance(wdg, (Segmented, PresetPicker)):
                 wdg.setValue(str(val))
             elif isinstance(wdg, Toggle):
@@ -640,12 +841,11 @@ class SettingsPage:
 
     def _load_fields(self):
         for k in WIRE_S_KEYS:
-            self.w[k].reconfigure(*WIRE_RANGE[self.s.get("wire_mode", "s")])
+            for wd in [self.w[k]] + self.w2.get(k, []):
+                wd.reconfigure(*WIRE_RANGE[self.s.get("wire_mode", "s")])
         for k in self.w:
             if k in self.s:
                 self._set_widget(k, self.s[k])
-        self._bat_extra_rows()
-        self._fx_rows()
         self._sync_mw()
         self.st_ser_days.setValue(self.s["ser_days"])
         self.seg_ser_w.setValue(self.s["ser_weather"])
@@ -653,6 +853,7 @@ class SettingsPage:
         self.st_g.setValue(self.s["pt_g"])
         self.st_t.setValue(self.s["pt_t"])
         self._refresh_station()
+        self._cons_reset()
 
     def _on_field(self, key, val):
         s = self.s
@@ -665,9 +866,12 @@ class SettingsPage:
             s["load_kwh"] = round(float(s["load_kwh"]) * k)
             self._set_widget("load_kwh", s["load_kwh"])
         s[key] = val
+        if key in getattr(self, "w2", {}):
+            self._set_widget(key, val)                     # то же поле в конструкторе и в карточке ниже
         if key == "wire_mode":
             for k in WIRE_S_KEYS:
-                self.w[k].reconfigure(*WIRE_RANGE[val])
+                for wd in [self.w[k]] + self.w2.get(k, []):
+                    wd.reconfigure(*WIRE_RANGE[val])
                 self._set_widget(k, s[k])
         builtin = s.get("mppt_mode") == "builtin"
         for pkey, presets, keys in PRESET_GROUPS:
@@ -882,12 +1086,13 @@ class SettingsPage:
         h1 = self.rows.get("_h1")
         if h1:
             h1[0].setText("Кабель от панелей до инвертора" if builtin else "Кабель от панелей до контроллера")
+        sep_any = (not builtin) or bool(s.get("ctl_extra"))      # есть контроллер со своим кабелем до АКБ
         for key in ("_h2", "bw_len", "bw_s", "bw_mat"):
             for wdg in self.rows.get(key, []):
-                wdg.setVisible(not builtin)
+                wdg.setVisible(sep_any)
         if hasattr(self, "seg_wire"):
-            self.seg_wire.btns["bw"].setVisible(not builtin)
-            if builtin and self.seg_wire.value() == "bw":
+            self.seg_wire.btns["bw"].setVisible(sep_any)
+            if not sep_any and self.seg_wire.value() == "bw":
                 self.seg_wire.setValue("pv")
         # инвертор
         d = INVERTER_DB.get(inv)
@@ -918,7 +1123,7 @@ class SettingsPage:
             t = (("Свой инвертор — параметры MPPT в карточке «MPPT инвертора». " if custom_inv else "Встроенный MPPT: ")
                  + f"{inputs_word(n)}, окно {float(s['vmpp_min']):g}–{float(s['vmpp_max']):g} В, Voc ≤ {float(s['v_max']):g} В"
                  + (f", до {ii:g} А на каждый вход" if ii > 0 else "") + f", заряд до {io:g} А"
-                 + f" · занято {int(s['n_in'])} из {n}")
+                 + f" · занято {inv_inputs_used(make_ctx(s))} из {n}")
         else:
             n = int(s["n_mppt_max"])
             io = float(s["iout_max"])
@@ -928,35 +1133,6 @@ class SettingsPage:
             if md and md[3]:
                 t += f" · {md[3]}"
         self.lab_mppt.setText(t)
-        # поля панелей: подписи входов, проверка каждого поля, кнопка «＋ поле», рисунок схемы
-        c = make_ctx(s)
-        k1 = int(s["n_in"])
-        word = "Вход" if builtin else "Контроллер"
-        self.lab_in1.setText(f"{word} 1" if k1 == 1 else f"{word}ы 1–{k1}")
-        self.head_pv.setText("☀ Панели на входах MPPT инвертора" if builtin else "☀ Панели → MPPT-контроллеры")
-        tmin, tmax = float(s["t_min"]), float(s["t_max"])
-        for kind, rows in (("pv", self.pv_extra_w), ("ctl", self.ctl_extra_w)):
-            idx = [i for i, fc in enumerate(c["fields"]) if bool(fc["ctl"]) == (kind == "ctl") and i > 0]
-            for parts, i in zip(rows, idx):
-                lvl, msg, n = field_status(c["fields"][i], tmin, tmax)
-                lab = field_label(c, i)
-                parts["title"].setText(lab[:1].upper() + lab[1:])
-                fc = c["fields"][i]
-                parts["status"].setText(
-                    f"<span style='color:{LVL_COL[lvl]}'>{LVL_ICON[lvl]}</span> {fc['npan']} "
-                    f"{plural(fc['npan'], 'панель', 'панели', 'панелей')} = {fc['pstc_tot'] / 1000:.2f} кВт · Vmp {n['vmp']:.0f} В · "
-                    f"Voc на морозе {n['voc_cold']:.0f} В (до {fc['v_max']:g} В) · ток {n['i']:.1f} А"
-                    + (f" (до {fc['iin_max']:g} А)" if fc["iin_max"] else "")
-                    + (f" · <span style='color:{LVL_COL[lvl]}'>{msg}</span>" if msg else ""))
-        used = k1 + len(s.get("pv_extra") or [])
-        nmax = int(s["n_mppt_max"])
-        free = nmax - used
-        self.btn_pv_add.setText(f"＋ Поле на {'вход' if builtin else 'контроллер'} {used + 1}")
-        self.btn_pv_add.setEnabled((free > 0 or not builtin) and len(s.get("pv_extra") or []) < PV_EXTRA_MAX)
-        self.lab_pv_free.setText(f"занято {used} из {nmax}" + (f", свободно {free}" if free > 0 else "") if builtin else
-                                 "у каждого поля — свой такой же контроллер")
-        self.btn_ctl_add.setEnabled(len(s.get("ctl_extra") or []) < CTL_EXTRA_MAX)
-        self.scheme.set_data(self._scheme_data(), self._p())
         # АКБ: из ячеек / АКБ меньшего напряжения — «сборки», готовые на напряжение системы — «шт»
         nser = bank_series(s)[1]
         st = self.w["bat_packs"]
@@ -964,7 +1140,11 @@ class SettingsPage:
         st.setValue(s["bat_packs"])
         st.setToolTip(f"Сборок по {nser} шт последовательно, параллельно — до 10" if nser > 1
                       else "Сколько АКБ параллельно, до 10")
-        for (pk, st2), gr in zip(self.bat_extra_w, bank_groups(s)[1:]):      # другие сборки: «сб.» или «шт»
-            st2.reconfigure(1, 10, 1, 0, "сб." if gr["nser"] > 1 else "шт")
-            st2.setValue(gr["n"])
+        self.btn_bat_add.setEnabled(len(s.get("bat_extra") or []) < BAT_EXTRA_MAX)
+        for wd in getattr(self, "cab_bw_w", []):
+            wd.setVisible(sep_any)
+        self.cab_pv.setText("Кабель панели → инвертор" if builtin else "Кабель панели → контроллер")
+        c = make_ctx(s)
+        self._cons_update(c)
+        self._side_sync(c)
         self._rebuild_layouts()

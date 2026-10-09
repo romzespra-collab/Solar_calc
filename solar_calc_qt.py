@@ -1,7 +1,8 @@
-"""solar_calc_qt.py  v1.5.0
+"""solar_calc_qt.py  v1.9.0
 Главное окно программы (PySide6): боковая панель, страницы, лог, статус.
 
 Журнал:
+v1.9.0: тема и итог расчёта обновляют холст конструктора станции.
 v1.5.0: без изменений окна — версия поднята вместе с программой (база панелей, выбор серии, поиск).
 v1.4.0: страницы «🌤 Погода» (погода + выработка по прогнозу) и «🌌 Небо», опрос погоды, разделитель
         в боковой панели по имени страницы.
@@ -235,6 +236,8 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
             return
         dt = (time.perf_counter() - t0) * 1000
         self._show_results()
+        if hasattr(self, "canvas"):
+            self._cons_update()                      # итог за год и «закрыто станцией» на схеме
         self._status(f"расчёт {dt:.0f} мс")
         self._wx_place_changed()
         cur = self.page_names[self.stack.currentIndex()]
@@ -265,8 +268,8 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
             c.set_theme(p)
         if hasattr(self, "wxpane"):
             self.wxpane.update()
-        if hasattr(self, "scheme"):
-            self.scheme.set_data(self._scheme_data(), p)
+        if hasattr(self, "canvas"):
+            self._cons_update()
 
     def _log_card(self):
         fr, v = _card("Лог")

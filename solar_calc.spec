@@ -1,4 +1,5 @@
-# solar_calc.spec  v1.5.0 — PyInstaller, onefile, без консоли
+# solar_calc.spec  v1.9.0 — PyInstaller, onefile, без консоли
+# v1.9.0: + modules/mod_constructor.py (конструктор станции), без mod_scheme
 # v1.5.0: + файл полной базы панелей modules/panels_db.tsv.gz (datas)
 # v1.4.0: + модули погоды, неба, астрономии, прогноза
 # v1.3.0: программа разбита на модули: solar_calc.py, solar_calc_qt.py, modules/ — всё вшивается в EXE
@@ -18,7 +19,7 @@ a = Analysis(
                    'modules.mod_checks', 'modules.mod_pvgis', 'modules.mod_theme', 'modules.mod_widgets',
                    'modules.mod_page_settings', 'modules.mod_page_results', 'modules.mod_page_tools',
                    'modules.mod_astro', 'modules.mod_stars', 'modules.mod_weather', 'modules.mod_forecast',
-                   'modules.mod_wx_draw', 'modules.mod_sky', 'modules.mod_page_sky', 'modules.mod_scheme'],
+                   'modules.mod_wx_draw', 'modules.mod_sky', 'modules.mod_page_sky', 'modules.mod_constructor'],
     hookspath=[],
     runtime_hooks=[],
     excludes=['PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngine',

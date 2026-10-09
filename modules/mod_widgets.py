@@ -1,7 +1,8 @@
-"""mod_widgets.py  v1.7.0
+"""mod_widgets.py  v1.9.0
 виджеты Qt: Toggle, Segmented, Stepper, график Chart, таблицы с меню
 
 Журнал:
+v1.9.0: PresetPicker(vertical=True) — поля друг под другом (боковая панель конструктора).
 v1.7.0: PresetPicker: поля не длиннее нужного (производитель ≤200, серия ≤330, модель ≤300/360 px);
         allow_custom=False — без «Своё» (для дополнительных сборок АКБ); extra_menu — свои пункты меню.
 v1.6.0: PresetPicker: группа без диапазона мощности (инверторы — по напряжению АКБ).
@@ -192,7 +193,7 @@ class PresetPicker(QWidget):
     series={ключ: серия} — третий уровень (панели). 🔎 — поиск по всей базе; правый клик — меню."""
     changed = Signal(str)
 
-    def __init__(self, db, custom_label, parent=None, series=None, what="модель", allow_custom=True):
+    def __init__(self, db, custom_label, parent=None, series=None, what="модель", allow_custom=True, vertical=False):
         super().__init__(parent)
         self.db = db                                   # {ключ: (производитель, модель, параметры, описание)}
         self.series = series
@@ -204,10 +205,11 @@ class PresetPicker(QWidget):
         for k, (b, *_rest) in db.items():
             self.tree.setdefault(b, {}).setdefault(series[k] if series else "", []).append(k)
         self._find_items = None
-        lay = QHBoxLayout(self)
+        lay = QVBoxLayout(self) if vertical else QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
-        lay.setSizeConstraint(QHBoxLayout.SetMinAndMaxSize)   # ширина выбора — не больше суммы полей
+        if not vertical:
+            lay.setSizeConstraint(QHBoxLayout.SetMinAndMaxSize)   # ширина выбора — не больше суммы полей
         self.cb_brand = NoWheelCombo()
         self.cb_brand.setToolTip("Производитель")
         self.cb_brand.setMaxVisibleItems(24)
@@ -224,9 +226,14 @@ class PresetPicker(QWidget):
             cb.customContextMenuRequested.connect(lambda pos, cb=cb: self._menu(cb.mapToGlobal(pos)))
         self.cb_series.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.cb_model.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.cb_brand.setMaximumWidth(200)             # не растягивать на всё окно
-        self.cb_series.setMaximumWidth(330)
-        self.cb_model.setMaximumWidth(300 if series else 360)
+        if not vertical:                               # в строке — не растягивать на всё окно
+            self.cb_brand.setMaximumWidth(200)
+            self.cb_series.setMaximumWidth(330)
+            self.cb_model.setMaximumWidth(300 if series else 360)
+        else:                                          # в боковой панели — друг под другом на всю ширину
+            for cb in (self.cb_brand, self.cb_series, self.cb_model):
+                cb.setMinimumContentsLength(8)
+                cb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         for cb in (self.cb_brand, self.cb_series, self.cb_model):
             cb.view().setMinimumWidth(320)             # список шире поля — названия видны целиком
         for b, ss in self.tree.items():
@@ -239,11 +246,21 @@ class PresetPicker(QWidget):
         self.btn_find.setCursor(Qt.PointingHandCursor)
         self.btn_find.setToolTip(f"Найти {what} по названию или мощности во всей базе ({len(db)} шт)")
         self.btn_find.clicked.connect(self.find)
-        lay.addWidget(self.cb_brand)
-        if series:
-            lay.addWidget(self.cb_series, 3)
-        lay.addWidget(self.cb_model, 2 if series else 1)
-        lay.addWidget(self.btn_find)
+        if vertical:
+            lay.addWidget(self.cb_brand)
+            if series:
+                lay.addWidget(self.cb_series)
+            last = QHBoxLayout()
+            last.setSpacing(6)
+            last.addWidget(self.cb_model, 1)
+            last.addWidget(self.btn_find)
+            lay.addLayout(last)
+        else:
+            lay.addWidget(self.cb_brand)
+            if series:
+                lay.addWidget(self.cb_series, 3)
+            lay.addWidget(self.cb_model, 2 if series else 1)
+            lay.addWidget(self.btn_find)
         self.cb_series.setVisible(bool(series))
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(lambda pos: self._menu(self.mapToGlobal(pos)))

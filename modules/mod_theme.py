@@ -1,7 +1,8 @@
-"""mod_theme.py  v1.5.0
+"""mod_theme.py  v1.9.0
 палитры тёмной/светлой темы и QSS для всех окон и диалогов
 
 Журнал:
+v1.9.0: конструктор станции — кнопки шагов (цвет по проверке), боковая панель настроек узла.
 v1.5.0: строки списка в окне поиска — с отступами.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1 (программа была одним файлом)
 """
@@ -63,6 +64,18 @@ QPushButton#primary {{ background: {p['accent']}; color: #ffffff; font-weight: 6
 QPushButton#primary:hover {{ background: {p['accent']}; border-color: {p['text']}; }}
 QPushButton#danger {{ background: transparent; color: {_ERR}; border: 1px solid {_ERR}; }}
 QPushButton#chip {{ padding: 3px 10px; font-size: 9pt; border-radius: 11px; }}
+QPushButton#step {{ background: {p['panel2']}; border: 1px solid {p['line']}; border-radius: 10px; padding: 4px 12px; min-height: 18px; font-weight: 600; }}
+QPushButton#step:hover {{ border-color: {p['accent']}; }}
+QPushButton#step:checked {{ background: {p['accent']}; color: #ffffff; border-color: {p['accent']}; }}
+QPushButton#step[st="warn"] {{ border: 1px solid #f5b545; border-radius: 10px; }}
+QPushButton#step[st="err"] {{ border: 1px solid #ff5d6c; border-radius: 10px; }}
+QPushButton#step[st="warn"]:checked {{ border: 2px solid #f5b545; border-radius: 10px; }}
+QPushButton#step[st="err"]:checked {{ border: 2px solid #ff5d6c; border-radius: 10px; }}
+QFrame#sidePanel {{ background: {p['panel2']}; border: 1px solid {p['line']}; border-radius: 10px; }}
+QFrame#sidePanel QStackedWidget, QFrame#sidePanel QStackedWidget > QWidget, QFrame#sidePanel QScrollArea,
+QFrame#sidePanel QScrollArea > QWidget > QWidget {{ background: {p['panel2']}; }}
+QLabel#sideTitle {{ color: {p['muted']}; font-size: 9pt; font-weight: 600; text-transform: uppercase; }}
+QLabel#sideBig {{ font-size: 13pt; font-weight: 700; }}
 QPushButton#seg {{ border-radius: 0; padding: 5px 10px; margin: 0; }}
 QPushButton#seg[pos="l"] {{ border-top-left-radius: 7px; border-bottom-left-radius: 7px; }}
 QPushButton#seg[pos="r"] {{ border-top-right-radius: 7px; border-bottom-right-radius: 7px; }}
