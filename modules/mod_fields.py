@@ -1,7 +1,8 @@
-"""mod_fields.py  v1.4.0
+"""mod_fields.py  v1.5.1
 Описание полей настроек: подписи, пределы, подсказки (без Qt).
 
 Журнал:
+v1.5.1: АКБ — «сборок» 1–10 (bat_packs) вместо «всего штук» (bat_count).
 v1.4.0: поле «Место (город)» (текст) — для погоды и неба.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; поля «Моя станция» (панели × шт, схема по входам MPPT,
         инвертор, MPPT встроенный/отдельный, АКБ × шт); карточки «Паспорт панели», «Потери поля»,
@@ -27,7 +28,9 @@ STATION_FIELDS = [
     ("m_preset", "Контроллер MPPT", "combo", MPPT_PRESETS, "Отдельный MPPT-контроллер"),
     ("n_mppt_max", "Входов / контроллеров", "num", (1, 12, 1, 0, "шт"), "Сколько входов MPPT у инвертора или сколько контроллеров"),
     ("bat_preset", "АКБ", "combo", BATTERY_PRESETS, "Тип аккумуляторов"),
-    ("bat_count", "Количество АКБ", "num", (0, 128, 1, 0, "шт"), "Всего штук; сборка S×P посчитается сама"),
+    ("bat_packs", "Сборок АКБ", "num", (1, 10, 1, 0, "сб."),
+     "Сколько сборок (или готовых АКБ) параллельно, до 10. Сколько штук последовательно в сборке — "
+     "по напряжению системы, считается само (ячейки 3.2 В на 48 В — 16 шт, АКБ 48 В — 1 шт)"),
     ("inv_bat_v", "АКБ инвертора", "num", (0, 96, 1, 0, "В"), "Напряжение АКБ по паспорту инвертора (0 — любое)"),
 ]
 
@@ -131,7 +134,7 @@ INPUT_CARDS = [
 PANEL_KEYS = ("pmax", "vmp", "imp", "voc", "isc", "gamma", "bvoc", "noct", "lowlight")
 MPPT_KEYS = ("v_max", "vmpp_min", "vmpp_max", "iin_max", "iout_max", "eta", "eta_k", "own_w", "headroom")
 MPPT_BUILTIN_KEYS = MPPT_KEYS + ("pv_pmax", "n_mppt_max")
-INT_KEYS = ("ns", "np", "n_main", "month", "bat_count", "inv_hours", "n_pan", "n_in", "n_mppt_max")
+INT_KEYS = ("ns", "np", "n_main", "month", "bat_packs", "inv_hours", "n_pan", "n_in", "n_mppt_max")
 BAT_KEYS = ("chem", "bat_unit_v", "bat_ah", "bat_c", "bat_dod")
 INV_KEYS = ("inv_p", "inv_eta", "inv_idle")
 WIRE_S_KEYS = ("wire_s", "bw_s", "iw_s")

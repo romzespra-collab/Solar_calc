@@ -1,7 +1,9 @@
-"""mod_model.py  v1.3.0
+"""mod_model.py  v1.5.1
 физика станции: панели → провод → MPPT → АКБ → инвертор; заряд АКБ по 10 минутам
 
 Журнал:
+v1.5.1: АКБ задаются сборками (bat_packs, 1–10): в сборке последовательно — по напряжению системы
+        (bank_series), всего штук = последовательно × сборок; лишних штук больше не бывает.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; поле из k одинаковых частей (входы MPPT / контроллеры);
         встроенный MPPT гибрида: предел мощности PV, ток заряда ограничивается при заряде АКБ (излишек
         солнца пропадает), нет провода MPPT→АКБ; раскладки панелей (layouts, layout_status, best_layout).
@@ -15,6 +17,13 @@ from .mod_sun import DT, irr_day
 
 
 LN5 = math.log(5.0)
+
+
+def bank_series(s):
+    """→ (номинал системы В, сколько АКБ/ячеек последовательно в одной сборке)."""
+    lfp = s["chem"] == "lfp"
+    sys_nom = int(s["bat_v"]) * (12.8 / 12.0 if lfp else 1.0)
+    return sys_nom, max(1, int(round(sys_nom / max(0.5, float(s["bat_unit_v"])))))
 
 
 def make_ctx(s):
@@ -46,13 +55,11 @@ def make_ctx(s):
     c["ri"] = MAT.get(s["iw_mat"], MAT["cu"])[0] * 2 * f("iw_len") / max(0.1, f("iw_s")) + 4 * rcb
     # банк АКБ
     lfp = s["chem"] == "lfp"
-    sys_nom = int(s["bat_v"]) * (12.8 / 12.0 if lfp else 1.0)
+    sys_nom, nser = bank_series(s)
     unit_v = max(0.5, f("bat_unit_v"))
-    nser = max(1, int(round(sys_nom / unit_v)))
-    cnt = max(0, int(s["bat_count"]))
-    npar = cnt // nser
+    npar = max(1, int(s["bat_packs"]))                # сборок параллельно
     tfac = 1 + (0.004 if lfp else 0.008) * min(0.0, f("t_bat") - 25)
-    c.update(sys_nom=sys_nom, nser=nser, npar=npar, extra=cnt - npar * nser, bank_v=nser * unit_v,
+    c.update(sys_nom=sys_nom, nser=nser, npar=npar, units=nser * npar, bank_v=nser * unit_v,
              bank_ah=npar * f("bat_ah"), mismatch_v=abs(nser * unit_v - sys_nom) / sys_nom > 0.1)
     c["bank_wh"] = c["bank_v"] * c["bank_ah"]
     c["usable_wh"] = c["bank_wh"] * f("bat_dod") / 100.0 * tfac

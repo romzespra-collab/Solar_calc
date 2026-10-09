@@ -1,7 +1,8 @@
-"""mod_checks.py  v1.3.0
+"""mod_checks.py  v1.5.1
 проверки схемы, проводов, MPPT, АКБ, инвертора
 
 Журнал:
+v1.5.1: АКБ задаются сборками — проверок «мало АКБ» и «лишние АКБ» больше нет.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; проверки на один вход MPPT (k входов/контроллеров),
         встроенный MPPT гибрида (предел мощности PV, ток заряда), напряжение АКБ инвертора.
 """
@@ -90,13 +91,8 @@ def bat_checks(s, c, res, bal):
         ch.append(("err", f"Инвертор рассчитан на АКБ {iv} В, а выбрана система {sv} В."))
     if c["mismatch_v"]:
         ch.append(("err", f"АКБ по {float(s['bat_unit_v']):g} В не собрать в систему {sv} В."))
-    if c["npar"] == 0:
-        ch.append(("err", f"Мало АКБ: для {sv} В нужно {c['nser']} шт последовательно, а указано {int(s['bat_count'])}."))
-    else:
-        ch.append(("ok", f"Банк: {c['nser']}S{c['npar']}P = {c['bank_v']:.1f} В {c['bank_ah']:.0f} А·ч = "
-                         f"{c['bank_wh'] / 1000:.1f} кВт·ч, полезно {c['usable_wh'] / 1000:.1f} кВт·ч."))
-    if c["extra"] > 0:
-        ch.append(("warn", f"{c['extra']} АКБ лишние: собираются группами по {c['nser']} шт последовательно."))
+    ch.append(("ok", f"Банк: {c['nser']}S{c['npar']}P ({c['units']} шт) = {c['bank_v']:.1f} В {c['bank_ah']:.0f} А·ч = "
+                     f"{c['bank_wh'] / 1000:.1f} кВт·ч, полезно {c['usable_wh'] / 1000:.1f} кВт·ч."))
     if s["chem"] == "lfp" and float(s["t_bat"]) < 0:
         ch.append(("err", f"LiFePO4 нельзя заряжать ниже 0°C (у вас {float(s['t_bat']):.0f}°C) — BMS отключит заряд. Нужно тёплое место или подогрев."))
     if s["chem"] == "lead" and float(s["bat_dod"]) > 50:

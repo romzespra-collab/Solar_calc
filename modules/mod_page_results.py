@@ -1,7 +1,8 @@
-"""mod_page_results.py  v1.3.0
+"""mod_page_results.py  v1.5.1
 страницы «Прогноз», «Покрытие дома», «Горсеть», отчёт
 
 Журнал:
+v1.5.1: АКБ сборками: «4 сборки × 16 последовательно = 64 шт»; совет «докупить» — в сборках.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; поле на k входов MPPT, встроенный MPPT гибрида (нет провода
         MPPT→АКБ, упор в предел мощности PV), отчёт с инвертором и MPPT.
 """
@@ -22,6 +23,13 @@ from .mod_model import wire_r, sim_point, load_day_wh, soc_series, grid_times, f
 from .mod_theme import _OK, _ERR, _WARN, SERIES_COL
 from .mod_widgets import (app_name, app_version, Segmented, Stepper, _lab, _card, _btn, _save_failed, _fmt,
                           Chart, make_table, _item)
+
+
+def _packs(n):
+    """1 сборка, 2 сборки, 5 сборок."""
+    n = int(n)
+    w = "сборка" if n % 10 == 1 and n % 100 != 11 else ("сборки" if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "сборок")
+    return f"{n} {w}"
 
 
 class ResultsPages:
@@ -224,9 +232,10 @@ class ResultsPages:
             self.kpi["bank"][0].setText("нет АКБ")
             self.kpi["bank"][1].setText("Проверьте количество и напряжение АКБ")
         self.lab_bank.setText(
-            f"Сборка: {c['nser']} послед. × {c['npar']} паралл. = {c['bank_v']:.1f} В, {c['bank_ah']:.0f} А·ч, "
-            f"{c['bank_wh'] / 1000:.1f} кВт·ч (полезно {c['usable_wh'] / 1000:.1f}) · ток заряда до {c['bank_ich']:.0f} А"
-            + (f" · ⚠ лишние {c['extra']} шт" if c["extra"] else "") + self._cell_info(c))
+            (f"{_packs(c['npar'])} × {c['nser']} шт последовательно ({c['nser']}S{c['npar']}P) = {c['units']} шт"
+             if c["nser"] > 1 else f"{c['npar']} шт параллельно")
+            + f" · {c['bank_v']:.1f} В, {c['bank_ah']:.0f} А·ч, {c['bank_wh'] / 1000:.1f} кВт·ч "
+              f"(полезно {c['usable_wh'] / 1000:.1f}) · ток заряда до {c['bank_ich']:.0f} А" + self._cell_info(c))
         self.lab_wire.setText(
             f"Сопротивление линий с контактами: панели→MPPT {wire_r(c, 20) * 1000:.0f} мОм"
             + ("" if c["builtin"] else f" · MPPT→АКБ {c['rb'] * 1000:.1f} мОм") + " · "
@@ -400,9 +409,11 @@ class ResultsPages:
         if night > 0:
             unit = float(s["bat_unit_v"]) * float(s["bat_ah"]) * float(s["bat_dod"]) / 100
             if night > c["usable_wh"] * 1.02 and unit > 0:
-                n = math.ceil(night / unit / c["nser"]) * c["nser"]
+                n = math.ceil(night / unit / c["nser"])
+                what = f"{_packs(n)} по {c['nser']} шт" if c["nser"] > 1 else f"{n} шт"
                 adv.append(f"🔋 Чтобы в солнечные месяцы пережить вечер и ночь без сети, полезная ёмкость нужна ≈<b>{night / 1000:.1f} кВт·ч</b> "
-                           f"(у вас {c['usable_wh'] / 1000:.1f}) → ≈<b>{n} шт</b> выбранных АКБ.")
+                           f"(у вас {c['usable_wh'] / 1000:.1f}) → ≈<b>{what}</b> выбранных АКБ"
+                           + (" — больше 10, нужны АКБ покрупнее." if n > 10 else "."))
             else:
                 adv.append(f"🔋 Ёмкости хватает на вечер и ночь в солнечные месяцы (нужно ≈{night / 1000:.1f} кВт·ч, есть {c['usable_wh'] / 1000:.1f}).")
         idle_y = c["inv_idle"] * c["inv_hours"] * 365 / 1000
@@ -528,7 +539,7 @@ class ResultsPages:
         if not inf:
             return ""
         cyc, kg, dims, ir = inf
-        n = int(self.s["bat_count"])
+        n = c["units"]
         txt = f"<br>Ресурс ≈{cyc} циклов (паспорт, 25°C)"
         if kg:
             txt += f" · {kg:g} кг/шт → {kg * n:.0f} кг · {dims} мм · R {ir} мОм"

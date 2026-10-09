@@ -1,7 +1,8 @@
-"""mod_page_settings.py  v1.5.0
+"""mod_page_settings.py  v1.5.1
 Страница «Настройки станции»: карточка «Моя станция» (что стоит), поля, пресеты, реакция на изменения.
 
 Журнал:
+v1.5.1: АКБ × сборок (1–10); у сборок из ячеек/АКБ последовательно — «сб.», у готовых АКБ на систему — «шт».
 v1.5.0: панели — производитель → серия → мощность из полной базы (21 тыс.), 🔎 поиск у всех выборов.
 v1.4.0: текстовое поле (место/город).
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; карточка «Моя станция»: панели (производитель → модель) × шт,
@@ -18,7 +19,7 @@ from .mod_panels import PANEL_DB, PANEL_SERIES
 from .mod_equipment import INVERTER_DB, MPPT_DB, BATTERY_DB, MPPT_PRESETS, inv_is_hybrid
 from .mod_fields import (INPUT_CARDS, INT_KEYS, INV_KEYS, WIRE_S_KEYS, WIRE_RANGE, PRESET_GROUPS, MPPT_MODES,
                          s2d, d2s)
-from .mod_model import make_ctx, layouts, layout_status, best_layout
+from .mod_model import make_ctx, layouts, layout_status, best_layout, bank_series
 from .mod_theme import _OK, _ERR, _WARN
 from .mod_widgets import Toggle, Segmented, NoWheelCombo, Stepper, PresetPicker, _lab, _card, _btn
 
@@ -144,7 +145,8 @@ class SettingsPage:
         g.addWidget(lab("АКБ", "Аккумуляторы"), 8, 0)
         g.addWidget(self.pk_bat, 8, 1)
         g.addWidget(_lab("×", "fieldLab"), 8, 2)
-        g.addWidget(count(0, 128, "bat_count", "Всего штук; сборка S×P посчитается сама"), 8, 3)
+        g.addWidget(count(1, 10, "bat_packs", "Сколько сборок (или готовых АКБ) параллельно, до 10. Сколько штук "
+                                               "последовательно в сборке — по напряжению системы, считается само"), 8, 3)
         self.lab_bank = hint(True)
         g.addWidget(self.lab_bank, 9, 1, 1, 3)
         v.addLayout(g)
@@ -514,4 +516,11 @@ class SettingsPage:
             if md and md[3]:
                 t += f" · {md[3]}"
         self.lab_mppt.setText(t)
+        # АКБ: из ячеек / АКБ меньшего напряжения — «сборки», готовые на напряжение системы — «шт»
+        nser = bank_series(s)[1]
+        st = self.w["bat_packs"]
+        st.reconfigure(1, 10, 1, 0, "сб." if nser > 1 else "шт")
+        st.setValue(s["bat_packs"])
+        st.setToolTip(f"Сборок по {nser} шт последовательно, параллельно — до 10" if nser > 1
+                      else "Сколько АКБ параллельно, до 10")
         self._rebuild_layouts()

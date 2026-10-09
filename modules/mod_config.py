@@ -1,7 +1,8 @@
-"""mod_config.py  v1.4.0
+"""mod_config.py  v1.5.1
 параметры станции по умолчанию, config.json: загрузка, проверка, сохранение
 
 Журнал:
+v1.5.1: АКБ — bat_packs (сборок 1–10); старое bat_count (всего штук) переводится в сборки.
 v1.4.0: place (город), fc_soc0 (заряд АКБ для прогноза по погоде); настройки погоды и неба
         (cfg["weather"], cfg["sky"]) с проверкой типов.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; новые параметры станции: n_pan (панелей всего), n_in (занято
@@ -16,6 +17,7 @@ import os
 from .mod_base import CONFIG_PATH, WEATHER, log
 from .mod_sun import BUILTIN_SUN
 from .mod_fields import ALL_FIELDS, INT_KEYS, WIRE_RANGE
+from .mod_model import bank_series
 
 
 DEFAULT_SYS = dict(
@@ -28,7 +30,7 @@ DEFAULT_SYS = dict(
     m_preset="cn60", v_max=150, vmpp_min=0, vmpp_max=145, iin_max=0, iout_max=60, eta=96, eta_k=3,
     own_w=4, headroom=3, mppt_mode="separate", n_mppt_max=1, pv_pmax=0,
     wire_mode="s", bw_len=1.5, bw_s=25, bw_mat="cu", iw_len=1.5, iw_s=35, iw_mat="cu",
-    bat_preset="eve_lf280k", bat_v="48", chem="lfp", bat_unit_v=3.2, bat_ah=280, bat_count=16, bat_dod=90,
+    bat_preset="eve_lf280k", bat_v="48", chem="lfp", bat_unit_v=3.2, bat_ah=280, bat_packs=1, bat_dod=90,
     bat_c=0.5, t_bat=15, bat_ch=56.8, eta_bat=97,
     inv_preset="hyb5", inv_p=6000, inv_eta=92, inv_idle=50, inv_hours=24, inv_bat_v=48,
     load_mode="m", load_kwh=250, load_winter=30, night_share=50, load_profile="typ",
@@ -75,6 +77,12 @@ def clean_sys(d):
         except (TypeError, ValueError):
             continue
         out[k] = v
+    if "bat_packs" not in d and "bat_count" in d:          # config до v1.5.1: всего штук → сборок
+        try:
+            n = int(float(d["bat_count"])) // bank_series(out)[1]
+            out["bat_packs"] = min(10, max(1, n))
+        except (TypeError, ValueError, KeyError):
+            pass
     out["n_in"] = min(out["n_in"], out["n_mppt_max"])
     out["n_pan"] = out["n_in"] * out["ns"] * out["np"]      # количество панелей = входы × S × P
     return out
