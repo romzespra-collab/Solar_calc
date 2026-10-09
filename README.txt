@@ -1,4 +1,4 @@
-solar_calc  v1.4.0
+solar_calc  v1.5.0
 ══════════════════
 
 Калькулятор выработки солнечной станции с MPPT и АКБ.
@@ -6,7 +6,8 @@ solar_calc  v1.4.0
 ГЛАВНОЕ — «МОЯ СТАНЦИЯ»
 ───────────────────────
 Вверху страницы ⚙ Настройки выбирается то, что стоит:
-  • панели: производитель → модель × количество (паспорт подставится сам);
+  • панели: производитель → серия → мощность × количество (паспорт подставится сам);
+    🔎 — поиск по всей базе: «risen 330», «RSM72», «tiger 440» (слова в любом порядке);
   • схема: последовательно × параллельно и на сколько входов MPPT — список с проверкой
     (✓ / ⚠ / ✗), кнопка ★ «Лучшая» подбирает схему с наибольшей выработкой без ошибок;
   • инвертор: гибрид (MPPT встроен — его окно, входы, ток на вход, мощность PV и ток заряда
@@ -45,9 +46,12 @@ solar_calc  v1.4.0
   • инвертор: модель, КПД, холостой ход, часы работы;
   • потребление дома за месяц или за год → баланс по месяцам, автономия АКБ.
 База оборудования (паспорта):
-  • панели — 101 модель: Jinko, LONGi, JA Solar, Trina, Canadian Solar, Risen, Astronergy, AIKO,
-    Tongwei, DAH, Huasun, Sunova, Yingli, Leapton, Ulica, Abi-Solar, Q CELLS, REC, Maxeon,
-    Victron (12 В), Axioma + типовые;
+  • панели — 21 тыс. моделей, 250+ производителей: база CEC/NREL (SAM 2026.7.3) — Jinko, LONGi,
+    JA Solar, Trina, Canadian Solar, Risen, Astronergy, Q CELLS, REC, Yingli, Suntech, Talesun,
+    Seraphim, Phono, ZNShine, Waaree, First Solar, SunPower/Maxeon, LG и др. (вся линейка мощностей
+    каждой серии, старые поли тоже); + паспорта популярных у нас серий, которых в CEC нет
+    (Tiger Neo, Hi-MO 6/7/9/X10, DeepBlue 4.0, Vertex S+, AIKO, Tongwei, DAH, Huasun, Sunova,
+    Ulica, Abi-Solar, Victron 12 В, Axioma …) + типовые. Серия «RSM72-6-xxxP» — xxx = мощность;
   • инверторы — 53 (41 гибрид со встроенным MPPT): Deye, Must, Axioma, Anern, Growatt, Luxpower,
     EASun, SRNE, PowMr, Voltronic Axpert, Solis, Sofar, Victron (MultiPlus/Phoenix/EasySolar);
   • MPPT-контроллеры — 30: Victron SmartSolar/BlueSolar, EPEver, SRNE, PowMr, Must, Renogy;
@@ -62,7 +66,7 @@ solar_calc  v1.4.0
      когда обратно на АКБ, кВт·ч из сети по месяцам, серия пасмурных дней подряд;
   ⚙ Настройки станции — все параметры в одном месте (профили 📂/💾);
   🔀 схемы S×P · 📐 угол/азимут · 🧵 провод · 🌐 данные PVGIS · 🎨 тема.
-Правый клик — меню почти везде (таблицы, графики, лог, поля).
+Правый клик — меню почти везде (таблицы, графики, лог, поля, выбор модели: найти, копировать паспорт).
 
 СТРУКТУРА
 ─────────
@@ -70,7 +74,8 @@ solar_calc.pyw              запуск двойным щелчком (без �
 solar_calc.py               точка входа: версия, установка библиотек, --selftest
 solar_calc_qt.py            главное окно
 modules/mod_base.py         пути, календарь, лог, фоновые задачи
-modules/mod_panels.py       база панелей
+modules/mod_panels.py       база панелей (ручные паспорта + загрузка полной базы)
+modules/panels_db.tsv.gz    полная база панелей (CEC + паспорта серий)
 modules/mod_equipment.py    инверторы, MPPT-контроллеры, АКБ, профили нагрузки, провода (ПУЭ)
 modules/mod_sun.py          солнце (формула NOAA), пояс станции, облучённость панелей
 modules/mod_astro.py        время станции, Солнце/Луна/звёзды, восход и закат

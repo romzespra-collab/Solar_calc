@@ -1,7 +1,9 @@
-"""mod_widgets.py  v1.3.0
+"""mod_widgets.py  v1.5.0
 виджеты Qt: Toggle, Segmented, Stepper, график Chart, таблицы с меню
 
 Журнал:
+v1.5.0: PresetPicker — третий уровень «серия» (панели: производитель → серия → мощность), 🔎 поиск по всей
+        базе (FindDialog), меню по правому клику (найти, копировать название/паспорт, своё).
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; PresetPicker — выбор «производитель → модель» из базы.
 """
 
@@ -13,7 +15,7 @@ from PySide6.QtGui import QPainter, QColor, QPen, QFont, QFontMetrics, QGuiAppli
 from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QToolButton, QButtonGroup, QHBoxLayout,
                                QVBoxLayout, QDoubleSpinBox, QComboBox, QAbstractButton, QTableWidget,
                                QTableWidgetItem, QHeaderView, QAbstractItemView, QMenu, QMessageBox,
-                               QFileDialog, QSizePolicy)
+                               QFileDialog, QSizePolicy, QDialog, QLineEdit, QListWidget, QListWidgetItem)
 
 from .mod_base import APP_ROOT, log
 from .mod_model import fmt_t
@@ -105,75 +107,259 @@ class NoWheelCombo(QComboBox):
             e.ignore()
 
 
+class FindDialog(QDialog):
+    """Поиск по всей базе: слова через пробел (порядок любой), Enter / двойной клик — выбрать."""
+    LIMIT = 400
+
+    def __init__(self, items, title, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(640, 460)
+        self.items = items                                 # [(ключ, подпись, текст для поиска)]
+        self.key = None
+        v = QVBoxLayout(self)
+        v.setContentsMargins(12, 12, 12, 12)
+        v.setSpacing(8)
+        self.ed = QLineEdit()
+        self.ed.setPlaceholderText("🔎 модель, серия, мощность — например: risen 330  или  RSM72  или  tiger 440")
+        self.ed.setClearButtonEnabled(True)
+        self.lst = QListWidget()
+        self.lst.setUniformItemSizes(True)
+        self.lst.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.lst.customContextMenuRequested.connect(self._menu)
+        self.lab = QLabel()
+        self.lab.setObjectName("hint")
+        bb = QHBoxLayout()
+        bb.addWidget(self.lab, 1)
+        ok, cancel = QPushButton("Выбрать"), QPushButton("Отмена")
+        ok.setObjectName("primary")
+        ok.clicked.connect(self._pick)
+        cancel.clicked.connect(self.reject)
+        bb.addWidget(ok)
+        bb.addWidget(cancel)
+        v.addWidget(self.ed)
+        v.addWidget(self.lst, 1)
+        v.addLayout(bb)
+        self.ed.textChanged.connect(self._filter)
+        self.ed.returnPressed.connect(self._pick)
+        self.lst.itemDoubleClicked.connect(lambda _: self._pick())
+        self._filter("")
+
+    def _filter(self, text):
+        words = text.lower().replace(",", " ").split()
+        hits = [it for it in self.items if all(w in it[2] for w in words)] if words else self.items
+        self.lst.setUpdatesEnabled(False)
+        self.lst.clear()
+        for k, label, _ in hits[:self.LIMIT]:
+            it = QListWidgetItem(label)
+            it.setData(Qt.UserRole, k)
+            self.lst.addItem(it)
+        self.lst.setUpdatesEnabled(True)
+        if hits:
+            self.lst.setCurrentRow(0)
+        n = len(hits)
+        self.lab.setText(f"найдено {n}" + (f", показаны первые {self.LIMIT} — уточните запрос" if n > self.LIMIT else "")
+                         if words else f"всего {n} — начните вводить")
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key_Down, Qt.Key_Up, Qt.Key_PageDown, Qt.Key_PageUp) and self.ed.hasFocus():
+            self.lst.setFocus()
+            self.lst.keyPressEvent(e)
+            return
+        super().keyPressEvent(e)
+
+    def _pick(self):
+        it = self.lst.currentItem()
+        if it is not None:
+            self.key = it.data(Qt.UserRole)
+            self.accept()
+
+    def _menu(self, pos):
+        it = self.lst.itemAt(pos)
+        m = QMenu(self)
+        m.addAction("✓ Выбрать", self._pick).setEnabled(it is not None)
+        m.addAction("📋 Копировать строку", lambda: QGuiApplication.clipboard().setText(it.text())).setEnabled(it is not None)
+        m.addSeparator()
+        m.addAction("🧹 Очистить поиск", self.ed.clear)
+        m.exec(self.lst.viewport().mapToGlobal(pos))
+
+
 class PresetPicker(QWidget):
-    """Выбор из базы оборудования: производитель → модель. Значение — ключ базы, «custom» — своё."""
+    """Выбор из базы: производитель → (серия →) модель. Значение — ключ базы, «custom» — своё.
+    series={ключ: серия} — третий уровень (панели). 🔎 — поиск по всей базе; правый клик — меню."""
     changed = Signal(str)
 
-    def __init__(self, db, custom_label, parent=None):
+    def __init__(self, db, custom_label, parent=None, series=None, what="модель"):
         super().__init__(parent)
         self.db = db                                   # {ключ: (производитель, модель, параметры, описание)}
+        self.series = series
         self.custom_label = custom_label
+        self.what = what
+        self.tree = {}                                 # производитель → серия → [ключи] (порядок базы)
+        for k, (b, *_rest) in db.items():
+            self.tree.setdefault(b, {}).setdefault(series[k] if series else "", []).append(k)
+        self._find_items = None
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
         self.cb_brand = NoWheelCombo()
         self.cb_brand.setToolTip("Производитель")
+        self.cb_brand.setMaxVisibleItems(24)
+        self.cb_series = NoWheelCombo()
+        self.cb_series.setToolTip("Серия: «xxx» — место мощности в названии")
+        self.cb_series.setMaxVisibleItems(24)
         self.cb_model = NoWheelCombo()
         self.cb_model.setToolTip("Модель")
+        self.cb_model.setMaxVisibleItems(24)
+        for cb, n in ((self.cb_brand, 10), (self.cb_series, 14), (self.cb_model, 16 if series else 18)):
+            cb.setMinimumContentsLength(n)
+            cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            cb.setContextMenuPolicy(Qt.CustomContextMenu)
+            cb.customContextMenuRequested.connect(lambda pos, cb=cb: self._menu(cb.mapToGlobal(pos)))
+        self.cb_series.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.cb_model.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.cb_model.setMinimumContentsLength(18)
-        self.cb_model.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        brands = []
-        for b, *_ in db.values():
-            if b not in brands:
-                brands.append(b)
-        for b in brands:
-            n = sum(1 for x in db.values() if x[0] == b)
-            self.cb_brand.addItem(f"{b}  ({n})", b)
+        for b, ss in self.tree.items():
+            self.cb_brand.addItem(f"{b}  ({sum(len(x) for x in ss.values())})", b)
         self.cb_brand.addItem("Своё", "")
+        self.btn_find = QToolButton()
+        self.btn_find.setText("🔎")
+        self.btn_find.setObjectName("stepBtn")
+        self.btn_find.setCursor(Qt.PointingHandCursor)
+        self.btn_find.setToolTip(f"Найти {what} по названию или мощности во всей базе ({len(db)} шт)")
+        self.btn_find.clicked.connect(self.find)
         lay.addWidget(self.cb_brand)
-        lay.addWidget(self.cb_model, 1)
+        if series:
+            lay.addWidget(self.cb_series, 3)
+        lay.addWidget(self.cb_model, 2 if series else 1)
+        lay.addWidget(self.btn_find)
+        self.cb_series.setVisible(bool(series))
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(lambda pos: self._menu(self.mapToGlobal(pos)))
         self.cb_brand.currentIndexChanged.connect(self._brand_changed)
+        self.cb_series.currentIndexChanged.connect(self._series_changed)
         self.cb_model.currentIndexChanged.connect(self._model_changed)
-        self._fill(self.cb_brand.currentData())
+        self._fill_series(self.cb_brand.currentData())
 
-    def _fill(self, brand):
+    # ── заполнение ──
+    def _fill_series(self, brand, pick=None):
+        cs = self.cb_series
+        cs.blockSignals(True)
+        cs.clear()
+        ss = self.tree.get(brand) if brand else None
+        if ss:
+            for name, keys in ss.items():
+                ps = [self.db[k][2]["pmax"] for k in keys] if self.series else []
+                if self.series and keys and isinstance(self.db[keys[0]][2], dict) and ps:
+                    lo, hi = min(ps), max(ps)
+                    rng = f"{lo:g} Вт" if lo == hi else f"{lo:g}–{hi:g} Вт"
+                    cs.addItem(f"{name}  ·  {rng}  ({len(keys)})", name)
+                    info = self.db[keys[0]][3]
+                    if info:
+                        cs.setItemData(cs.count() - 1, info, Qt.ToolTipRole)
+                else:
+                    cs.addItem(name or "—", name)
+        else:
+            cs.addItem("—", None)
+        cs.setEnabled(bool(ss))
+        if pick is not None:
+            cs.setCurrentIndex(max(0, cs.findData(pick)))
+        cs.blockSignals(False)
+        self._fill_models(brand, cs.currentData())
+
+    def _fill_models(self, brand, ser):
         cm = self.cb_model
         cm.blockSignals(True)
         cm.clear()
         if not brand:
             cm.addItem(self.custom_label, "custom")
         else:
-            for k, (b, name, _, info) in self.db.items():
-                if b == brand:
-                    cm.addItem(name, k)
-                    if info:
-                        cm.setItemData(cm.count() - 1, info, Qt.ToolTipRole)
+            for k in self.tree.get(brand, {}).get(ser, []):
+                _, name, _, info = self.db[k]
+                cm.addItem(name, k)
+                if info:
+                    cm.setItemData(cm.count() - 1, info, Qt.ToolTipRole)
         cm.blockSignals(False)
 
     def _brand_changed(self, i):
-        self._fill(self.cb_brand.itemData(i))
+        self._fill_series(self.cb_brand.itemData(i))
+        self._model_changed(self.cb_model.currentIndex())
+
+    def _series_changed(self, i):
+        self._fill_models(self.cb_brand.currentData(), self.cb_series.itemData(i))
         self._model_changed(self.cb_model.currentIndex())
 
     def _model_changed(self, i):
         k = self.cb_model.itemData(i)
+        self.cb_model.setToolTip((self.db[k][3] if k in self.db else "") or "Модель")
         if k:
             self.changed.emit(k)
 
+    # ── значение ──
     def value(self):
         return self.cb_model.currentData() or "custom"
 
     def setValue(self, key):
         brand = self.db[key][0] if key in self.db else ""
+        ser = (self.series.get(key, "") if self.series else "") if key in self.db else None
         self.cb_brand.blockSignals(True)
         self.cb_brand.setCurrentIndex(max(0, self.cb_brand.findData(brand)))
         self.cb_brand.blockSignals(False)
-        self._fill(brand)
+        self._fill_series(brand, pick=ser)
         self.cb_model.blockSignals(True)
         self.cb_model.setCurrentIndex(max(0, self.cb_model.findData(key if key in self.db else "custom")))
         self.cb_model.blockSignals(False)
         info = self.db[key][3] if key in self.db else ""
         self.cb_model.setToolTip(info or "Модель")
+
+    def _select(self, key):
+        if key in self.db and key != self.value():
+            self.setValue(key)
+            self.changed.emit(key)
+
+    # ── поиск и меню ──
+    def find(self):
+        if self._find_items is None:
+            items = []
+            for k, (b, name, p, info) in self.db.items():
+                ser = self.series.get(k, "") if self.series else ""
+                label = f"{b}  ·  {name}" + (f"   — {ser}" if ser and ser != b else "")
+                text = f"{b} {name} {ser} {info} {k}".lower()
+                if isinstance(p, dict) and p.get("pmax"):
+                    text += f" {p['pmax']:g}w {p['pmax']:g}вт"
+                items.append((k, label, text))
+            self._find_items = items
+        dlg = FindDialog(self._find_items, f"Поиск: {self.what}", self.window())
+        cur = self.value()
+        if cur in self.db:
+            b, name, *_ = self.db[cur]
+            dlg.ed.setText(f"{b} {name.split('·')[-1].strip()}".lower())
+            dlg.ed.selectAll()
+        if dlg.exec() == QDialog.Accepted and dlg.key:
+            self._select(dlg.key)
+
+    def _passport(self):
+        k = self.value()
+        if k not in self.db:
+            return ""
+        b, name, p, info = self.db[k]
+        ps = ", ".join(f"{a}={v:g}" if isinstance(v, (int, float)) else f"{a}={v}" for a, v in p.items()) \
+            if isinstance(p, dict) else ""
+        return f"{b} {name}\n{info}\n{ps}".strip()
+
+    def _menu(self, gpos):
+        k = self.value()
+        m = QMenu(self)
+        m.addAction(f"🔎 Найти {self.what}…", self.find)
+        m.addSeparator()
+        cb = QGuiApplication.clipboard()
+        if k in self.db:
+            b, name, *_ = self.db[k]
+            m.addAction("📋 Копировать название", lambda: cb.setText(f"{b} {name}"))
+            m.addAction("📋 Копировать паспорт", lambda: cb.setText(self._passport()))
+        m.addSeparator()
+        a = m.addAction("✎ Своё — параметры вручную", lambda: (self.setValue("custom"), self.changed.emit("custom")))
+        a.setEnabled(k != "custom")
+        m.exec(gpos)
 
 
 class Stepper(QWidget):

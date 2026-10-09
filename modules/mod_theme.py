@@ -1,7 +1,8 @@
-"""mod_theme.py  v1.3.0
+"""mod_theme.py  v1.5.0
 палитры тёмной/светлой темы и QSS для всех окон и диалогов
 
 Журнал:
+v1.5.0: строки списка в окне поиска — с отступами.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1 (программа была одним файлом)
 """
 
@@ -89,5 +90,6 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 QSplitter::handle {{ background: {p['bg']}; }}
 QSplitter::handle:hover {{ background: {p['accent']}; }}
 QFileDialog QListView, QFileDialog QTreeView {{ background: {p['panel2']}; }}
+QDialog QListWidget::item {{ padding: 4px 6px; border-radius: 5px; }}
 QFileDialog QToolButton {{ background: {p['panel2']}; border: 1px solid {p['line']}; border-radius: 6px; padding: 3px; }}
 """

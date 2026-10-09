@@ -1,7 +1,8 @@
-"""mod_page_settings.py  v1.4.0
+"""mod_page_settings.py  v1.5.0
 Страница «Настройки станции»: карточка «Моя станция» (что стоит), поля, пресеты, реакция на изменения.
 
 Журнал:
+v1.5.0: панели — производитель → серия → мощность из полной базы (21 тыс.), 🔎 поиск у всех выборов.
 v1.4.0: текстовое поле (место/город).
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; карточка «Моя станция»: панели (производитель → модель) × шт,
         схема по входам MPPT с проверкой и подбором ★, инвертор, MPPT встроенный / отдельный (карточка
@@ -13,7 +14,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QComboBox, QLabel, QLineEdit
 
 from .mod_base import log
-from .mod_panels import PANEL_DB
+from .mod_panels import PANEL_DB, PANEL_SERIES
 from .mod_equipment import INVERTER_DB, MPPT_DB, BATTERY_DB, MPPT_PRESETS, inv_is_hybrid
 from .mod_fields import (INPUT_CARDS, INT_KEYS, INV_KEYS, WIRE_S_KEYS, WIRE_RANGE, PRESET_GROUPS, MPPT_MODES,
                          s2d, d2s)
@@ -88,8 +89,8 @@ class SettingsPage:
             return st
 
         # панели × шт
-        self.pk_pan = PresetPicker(PANEL_DB, "Своя панель — паспорт ниже")
-        self.pk_pan.setToolTip("Производитель и модель панели — подставит паспорт")
+        self.pk_pan = PresetPicker(PANEL_DB, "Своя панель — паспорт ниже", series=PANEL_SERIES, what="панель")
+        self.pk_pan.setToolTip("Производитель → серия → мощность; 🔎 — поиск по всей базе. Подставит паспорт")
         self.pk_pan.changed.connect(lambda k: self._on_field("p_preset", k))
         self.w["p_preset"] = self.pk_pan
         g.addWidget(lab("Панели", "Какие панели стоят"), 0, 0)
@@ -109,7 +110,7 @@ class SettingsPage:
         self.lab_layout = hint(True)
         g.addWidget(self.lab_layout, 3, 1, 1, 3)
         # инвертор
-        self.pk_inv = PresetPicker(INVERTER_DB, "Свой инвертор — параметры ниже")
+        self.pk_inv = PresetPicker(INVERTER_DB, "Свой инвертор — параметры ниже", what="инвертор")
         self.pk_inv.changed.connect(lambda k: self._on_field("inv_preset", k))
         self.w["inv_preset"] = self.pk_inv
         g.addWidget(lab("Инвертор", "Инвертор: гибрид (MPPT внутри) или без MPPT"), 4, 0)
@@ -121,7 +122,7 @@ class SettingsPage:
         self.seg_mppt.setToolTip("Гибридный инвертор — MPPT встроен; к инвертору без MPPT нужен отдельный контроллер")
         self.seg_mppt.changed.connect(lambda k: self._on_field("mppt_mode", k))
         self.w["mppt_mode"] = self.seg_mppt
-        self.pk_mppt = PresetPicker(MPPT_DB, "Свой контроллер — параметры ниже")
+        self.pk_mppt = PresetPicker(MPPT_DB, "Свой контроллер — параметры ниже", what="контроллер")
         self.pk_mppt.changed.connect(lambda k: self._on_field("m_preset", k))
         self.w["m_preset"] = self.pk_mppt
         self.lab_x2 = _lab("×", "fieldLab")
@@ -137,7 +138,7 @@ class SettingsPage:
         self.lab_mppt = hint()
         g.addWidget(self.lab_mppt, 7, 1, 1, 3)
         # АКБ × шт
-        self.pk_bat = PresetPicker(BATTERY_DB, "Свои АКБ — параметры ниже")
+        self.pk_bat = PresetPicker(BATTERY_DB, "Свои АКБ — параметры ниже", what="АКБ")
         self.pk_bat.changed.connect(lambda k: self._on_field("bat_preset", k))
         self.w["bat_preset"] = self.pk_bat
         g.addWidget(lab("АКБ", "Аккумуляторы"), 8, 0)

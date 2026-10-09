@@ -1,16 +1,25 @@
-"""mod_panels.py  v1.3.0
-База солнечных панелей: паспорт STC + температурные коэффициенты, по производителям.
-Паспорта — из datasheet производителей (35 шт сверены с базой CEC/NREL SAM 2026.7.3);
+"""mod_panels.py  v1.5.0
+База солнечных панелей: паспорт STC + температурные коэффициенты, «производитель → серия → мощность».
+Полная база — panels_db.tsv.gz рядом (CEC/NREL SAM 2026.7.3 — 21 тыс. моделей, 250+ производителей,
++ паспорта популярных серий, которых в CEC нет). Ниже — ручные паспорта (сверены с datasheet), они главнее
+файла; их ключи не меняются (старые настройки открываются как были).
 «≈ не проверено» в описании — значения из каталога, не из паспорта.
 
 Журнал:
+v1.5.0: полная база из файла panels_db.tsv.gz (CEC + паспорта серий); серии (PANEL_SERIES) — для выбора
+        «производитель → серия → мощность»; поиск по базе (PANEL_FIND).
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; база «производитель → модель» (PANEL_DB):
         96 моделей — Jinko, LONGi, JA Solar, Trina, Canadian Solar, Risen, Astronergy, AIKO,
         Tongwei, DAH Solar, Huasun, Sunova, Yingli, Leapton, Ulica Solar, Abi-Solar, Q CELLS, REC,
         Maxeon, Victron, Axioma Energy.
 """
 
-from .mod_base import make_db, presets_of
+import gc
+import gzip
+import re
+from pathlib import Path
+
+from .mod_base import log, presets_of
 
 
 def _p(pmax, vmp, imp, voc, isc, gamma, bvoc, noct=45, lowlight=97):
@@ -19,7 +28,7 @@ def _p(pmax, vmp, imp, voc, isc, gamma, bvoc, noct=45, lowlight=97):
 
 # (ключ, производитель, модель, паспорт: Pmax Вт, Vmp В, Imp А, Voc В, Isc А, γ %/°C, βVoc %/°C, NOCT/NMOT °C,
 #  КПД при 200 Вт/м² %, описание)
-PANEL_DB = make_db([
+_CURATED = [
     ("p100", "Типовые", "100 Вт, 36 ячеек (12 В)", _p(100, 18.0, 5.56, 21.6, 6.0, -0.40, -0.30, 47, 96), "моно/поли 36 ячеек"),
     ("p300", "Типовые", "Поли 300 Вт, 60 ячеек", _p(300, 32.6, 9.20, 39.8, 9.70, -0.40, -0.30, 45, 96), "поликристалл 60 ячеек"),
     ("p410", "Типовые", "Моно 410 Вт, 108 полуяч.", _p(410, 31.4, 13.06, 37.6, 13.90, -0.35, -0.27, 45, 97), "моно PERC 108 полуячеек"),
@@ -217,6 +226,120 @@ PANEL_DB = make_db([
      "36 моно · 1485×668×30 мм · 11 кг · NOCT 45°C · паспорт ✓"),
     ("axiomaenergy_ax200m", "Axioma Energy", "200 Вт · AX-200M (AX-M)", _p(200, 18.1, 11.05, 21.6, 11.87, -0.38, -0.3, 45, 97),
      "64 моно (2 parallel strings) · 1378×770×35 мм · 10.7 кг · NOCT 45°C · ≈ не проверено"),
-])
+]
+
+DB_FILE = Path(__file__).resolve().parent / "panels_db.tsv.gz"
+TYPICAL = "Типовые"
+_TECH = {"mono": "моно", "poly": "поли", "thin": "тонкоплёночная", "cdte": "CdTe тонкоплёночная", "cigs": "CIGS",
+         "asi": "a-Si"}
+
+
+def _slug(s):
+    return re.sub(r"[^0-9a-z]", "", s.lower())
+
+
+def series_of(code, pmax):
+    """Модель → шаблон серии: мощность в названии заменяется на «xxx» (RSM72-6-330P → RSM72-6-xxxP)."""
+    ps = str(int(round(pmax)))
+    m = list(re.finditer(r"(?<!\d)" + ps + r"(?!\d)", code))
+    if not m:
+        return code
+    mm = m[-1] if len(m) > 1 and not code.startswith(ps) else m[0]
+    return code[:mm.start()] + "xxx" + code[mm.end():]
+
+
+def _natural(s):
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
+
+
+_COLS = ("key", "brand", "family", "series", "code", "pmax", "vmp", "imp", "voc", "isc", "gamma", "bvoc", "noct",
+         "lowlight", "tech", "cells", "bif", "size", "src", "ct", "wt", "nk", "url")
+_PK = ("pmax", "vmp", "imp", "voc", "isc", "gamma", "bvoc", "noct", "lowlight")
+
+
+def _info_file(tech, cells, bif, size, src, ct, wt, nk, noct):
+    parts = [ct or _TECH.get(tech, tech)]
+    if cells and cells != "0":
+        parts.append(f"{cells} яч." if src == "ds" else f"{cells} яч. последовательно")
+    if bif == "1":
+        parts.append("двусторонняя")
+    if size:
+        parts.append(size.replace("x", "×") + " мм")
+    if wt:
+        parts.append(f"{wt} кг")
+    parts.append(f"{nk or 'NOCT'} {noct}°C")
+    parts.append("паспорт ✓" if src == "ds" else "база CEC 2026.7.3")
+    return " · ".join(parts)
+
+
+def _load_file():
+    """panels_db.tsv.gz → {ключ: [производитель, семейство, серия, модель, паспорт, описание]}.
+    Нет файла — пусто (останутся ручные паспорта)."""
+    out = {}
+    try:
+        with gzip.open(DB_FILE, "rt", encoding="utf-8") as f:
+            head = f.readline().rstrip("\n").split("\t")
+            if tuple(head) != _COLS:
+                raise ValueError("другой формат файла")
+            n = len(_COLS)
+            for line in f:
+                v = line.rstrip("\n").split("\t")
+                if len(v) != n:
+                    continue
+                (key, brand, fam, ser, code, pm, vmp, imp, voc, isc, gm, bv, noct, ll,
+                 tech, cells, bif, size, src, ct, wt, nk, _url) = v
+                try:
+                    p = dict(zip(_PK, map(float, (pm, vmp, imp, voc, isc, gm, bv, noct, ll))))
+                except ValueError:
+                    continue
+                if p["pmax"] > 0:
+                    out[key] = [brand, fam, ser, code, p, _info_file(tech, cells, bif, size, src, ct, wt, nk, noct)]
+    except (OSError, EOFError, ValueError) as e:
+        log.warning(f"⚠ база панелей {DB_FILE.name} не прочитана ({e}) — только встроенные модели")
+    return out
+
+
+def _build():
+    """→ (база {ключ: (производитель, модель, паспорт, описание)}, {ключ: серия}) — по порядку выбора."""
+    recs = _load_file()
+    for key, brand, name, p, info in _CURATED:
+        if brand == TYPICAL:
+            recs[key] = [brand, "", "Типовые панели", name, p, info]
+            continue
+        m = re.match(r"\s*[\d.]+\s*Вт\s*·\s*(.+?)\s*(?:\((.+)\))?\s*$", name)
+        code, fam = (m.group(1), m.group(2) or "") if m else (name, "")
+        old = recs.pop(_slug(brand) + "_" + _slug(code), None)          # та же модель из файла
+        if old is not None:
+            recs[key] = [brand, old[1] or fam, old[2], old[3], p, info]
+        else:
+            recs[key] = [brand, fam, series_of(code, p["pmax"]), code, p, info]
+    # подпись серии: «семейство · шаблон», одна на серию
+    fam_of = {}
+    for brand, fam, ser, *_ in recs.values():
+        if fam and (brand, ser) not in fam_of:
+            fam_of[(brand, ser)] = fam
+    labels, nat, rows = {}, {}, []
+    for key, (brand, fam, ser, code, p, info) in recs.items():
+        bs = (brand, ser)
+        label = labels.get(bs)
+        if label is None:
+            f = fam_of.get(bs, "")
+            label = ser if brand == TYPICAL or not f or _slug(f) in _slug(ser) else f"{f} · {ser}"
+            labels[bs] = label
+            nat[bs] = _natural(ser)                      # порядок серий — по названию модели, не по семейству
+        name = code if brand == TYPICAL else f"{p['pmax']:g} Вт · {code}"
+        rows.append((brand != TYPICAL, brand.lower(), nat[bs], p["pmax"], code, key, brand, label, name, p, info))
+    rows.sort()
+    db = {r[5]: (r[6], r[8], r[9], r[10]) for r in rows}
+    return db, {r[5]: r[7] for r in rows}
+
+
+_gc = gc.isenabled()
+gc.disable()                      # 21 тыс. записей: без сборщика мусора загрузка в разы быстрее
+try:
+    PANEL_DB, PANEL_SERIES = _build()
+finally:
+    if _gc:
+        gc.enable()
 
 PANEL_PRESETS = presets_of(PANEL_DB, "Своя панель")
