@@ -1,7 +1,8 @@
-"""mod_page_settings.py  v1.3.0
+"""mod_page_settings.py  v1.4.0
 Страница «Настройки станции»: карточка «Моя станция» (что стоит), поля, пресеты, реакция на изменения.
 
 Журнал:
+v1.4.0: текстовое поле (место/город).
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; карточка «Моя станция»: панели (производитель → модель) × шт,
         схема по входам MPPT с проверкой и подбором ★, инвертор, MPPT встроенный / отдельный (карточка
         MPPT и провод MPPT→АКБ видны только для отдельного контроллера или своего инвертора), АКБ × шт.
@@ -9,7 +10,7 @@ v1.3.0: вынесено из solar_calc.pyw v1.2.1; карточка «Моя �
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QComboBox, QLabel
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QComboBox, QLabel, QLineEdit
 
 from .mod_base import log
 from .mod_panels import PANEL_DB
@@ -197,6 +198,9 @@ class SettingsPage:
         elif kind == "seg":
             wdg = Segmented(opt)
             wdg.changed.connect(lambda v, k=key: self._on_field(k, v))
+        elif kind == "text":
+            wdg = QLineEdit()
+            wdg.editingFinished.connect(lambda k=key, wd=wdg: wd.text() != self.s.get(k) and self._on_field(k, wd.text()))
         elif kind == "toggle":
             wdg = Toggle()
             self.toggles.append(wdg)
@@ -231,6 +235,8 @@ class SettingsPage:
                 wdg.setValue(str(val))
             elif isinstance(wdg, Toggle):
                 wdg.setChecked(bool(val))
+            elif isinstance(wdg, QLineEdit):
+                wdg.setText(str(val))
             elif isinstance(wdg, QComboBox):
                 i = wdg.findData(val)
                 wdg.setCurrentIndex(i if i >= 0 else 0)

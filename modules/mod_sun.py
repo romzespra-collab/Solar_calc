@@ -1,10 +1,15 @@
-"""mod_sun.py  v1.3.0
-положение солнца, облучённость плоскости панелей, данные солнца (встроенные / PVGIS)
+"""mod_sun.py  v1.4.0
+Положение Солнца (одна формула на всю программу: расчёт, небо, восход/закат), часовой пояс станции
+с летним временем ЕС, облучённость плоскости панелей, данные солнца (встроенные / PVGIS).
 
 Журнал:
+v1.4.0: формула Солнца — NOAA с дробным днём (как в Smart_BMS), разница с v1.3 < 0.1%; правило
+        летнего времени ЕС (zone_offset); облучённость панели вынесена в poa() — её же использует
+        прогноз выработки по погоде.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1 (программа была одним файлом)
 """
 
+import datetime
 import math
 import threading
 
@@ -22,13 +27,20 @@ DT = 1.0 / 6.0          # шаг 10 минут
 N_STEPS = 144
 
 
-def sun(lat, lon, doy, t_utc):
-    """→ (cos зенита, зенит рад, азимут от юга рад (+запад), внеатм. облучённость)."""
-    B = 2 * math.pi * (doy - 1) / 365.0
+def decl_eot(doy, t_utc):
+    """Склонение Солнца (рад) и уравнение времени (мин), NOAA/Spencer, дробный день года."""
+    B = 2 * math.pi * (doy - 1 + (t_utc - 12.0) / 24.0) / 365.0
     decl = (0.006918 - 0.399912 * math.cos(B) + 0.070257 * math.sin(B) - 0.006758 * math.cos(2 * B)
             + 0.000907 * math.sin(2 * B) - 0.002697 * math.cos(3 * B) + 0.00148 * math.sin(3 * B))
     eot = 229.18 * (0.000075 + 0.001868 * math.cos(B) - 0.032077 * math.sin(B)
                     - 0.014615 * math.cos(2 * B) - 0.040849 * math.sin(2 * B))
+    return decl, eot
+
+
+def sun(lat, lon, doy, t_utc):
+    """→ (cos зенита, зенит рад, азимут от юга рад (+запад), внеатм. облучённость).
+    NOAA: склонение и уравнение времени по дробному дню года; t_utc — часы UTC."""
+    decl, eot = decl_eot(doy, t_utc)
     st = t_utc + lon / 15.0 + eot / 60.0
     w = math.radians(15.0 * (st - 12.0))
     phi = math.radians(lat)
@@ -38,6 +50,49 @@ def sun(lat, lon, doy, t_utc):
     az = math.atan2(math.sin(w), math.cos(w) * math.sin(phi) - math.tan(decl) * math.cos(phi))
     g0 = 1367.0 * (1 + 0.033 * math.cos(2 * math.pi * doy / 365.0))
     return cosz, zen, az, g0
+
+
+def _last_sunday(year, month):
+    d = datetime.date(year, month + 1, 1) - datetime.timedelta(days=1) if month < 12 else datetime.date(year, 12, 31)
+    return d - datetime.timedelta(days=(d.weekday() + 1) % 7)
+
+
+def dst_on(utc):
+    """Летнее время ЕС/Украина: с последнего воскресенья марта 01:00 UTC до последнего воскресенья октября."""
+    y = utc.year
+    a = datetime.datetime.combine(_last_sunday(y, 3), datetime.time(1))
+    b = datetime.datetime.combine(_last_sunday(y, 10), datetime.time(1))
+    return a <= utc.replace(tzinfo=None) < b
+
+
+def zone_offset(tz, dst, utc):
+    """Смещение местного времени станции от UTC, часы (зимний пояс + летнее время)."""
+    return float(tz) + (1.0 if dst and dst_on(utc) else 0.0)
+
+
+def poa(G, D, cosz, zen, az, g0, geom):
+    """Облучённость плоскости панелей, Вт/м². G — глобальная горизонтальная, D — рассеянная (None —
+    по Erbs), geom = (cos наклона, sin наклона, азимут панели рад, горизонт °, альбедо)."""
+    if cosz <= 0.0 or G <= 0.0:
+        return 0.0
+    cb, sb, asp, hor, alb = geom
+    if D is None:
+        D = G * erbs_kd(min(1.0, G / (g0 * cosz)))
+    B = max(0.0, G - D)
+    elev = 90.0 - math.degrees(zen)
+    beam = 0.0
+    if B > 0 and cosz > 0.035 and elev > hor:
+        dni = min(B / cosz, 1050.0)
+        ct = cosz * cb + math.sin(zen) * sb * math.cos(az - asp)
+        if ct > 0:
+            iam = max(0.0, 1 - 0.05 * (1 / max(ct, 0.05) - 1))
+            beam = dni * ct * iam
+    return beam + D * (1 + cb) / 2 * 0.95 + G * alb * (1 - cb) / 2
+
+
+def panel_geom(s, alb):
+    tilt = math.radians(float(s["tilt"]))
+    return math.cos(tilt), math.sin(tilt), math.radians(float(s["aspect"])), float(s["horizon"]), alb
 
 
 def haurwitz(cosz):
@@ -96,13 +151,9 @@ def irr_day(s, sd, m, w):
         hit = _IRR_CACHE.get(key)
     if hit is not None:
         return hit
-    tilt = math.radians(float(s["tilt"]))
-    cb, sb = math.cos(tilt), math.sin(tilt)
-    asp = math.radians(float(s["aspect"]))
-    hor = float(s["horizon"])
-    tz = float(s["tz"]) + (1 if s["dst"] and 3 <= m <= 9 else 0)
+    tz = zone_offset(s["tz"], s["dst"], datetime.datetime(2025, m + 1, 15, 12))   # середина месяца
     ko = float(s["overcast_k"]) / 100.0
-    alb = 0.35 if m in (0, 1, 11) else 0.2
+    geom = panel_geom(s, 0.35 if m in (0, 1, 11) else 0.2)
     doy = MID_DOY[m]
     geo = [sun(lat, lon, doy, (i + 0.5) * DT) for i in range(N_STEPS)]
     ghi = [0.0] * N_STEPS
@@ -143,28 +194,8 @@ def irr_day(s, sd, m, w):
     for i, (cosz, zen, az, g0) in enumerate(geo):
         tl = ((i + 0.5) * DT + tz) % 24.0
         G = ghi[i]
-        if cosz <= 0.0 or G <= 0.0:
-            out.append((tl, 0.0, ta[i]))
-            continue
-        if w == "over":
-            D = G
-        elif dhi[i] is not None:
-            D = dhi[i]
-        else:
-            kt = min(1.0, G / (g0 * cosz))
-            D = G * erbs_kd(kt)
-        B = max(0.0, G - D)
-        elev = 90.0 - math.degrees(zen)
-        beam = 0.0
-        if B > 0 and cosz > 0.035 and elev > hor:
-            dni = min(B / cosz, 1050.0)
-            ct = cosz * cb + math.sin(zen) * sb * math.cos(az - asp)
-            if ct > 0:
-                iam = max(0.0, 1 - 0.05 * (1 / max(ct, 0.05) - 1))
-                beam = dni * ct * iam
-        diff = D * (1 + cb) / 2 * 0.95
-        refl = G * alb * (1 - cb) / 2
-        out.append((tl, beam + diff + refl, ta[i]))
+        D = G if w == "over" else dhi[i]
+        out.append((tl, poa(G, D, cosz, zen, az, g0, geom), ta[i]))
     out.sort()
     with _IRR_LOCK:
         if len(_IRR_CACHE) > 4000:

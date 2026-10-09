@@ -1,4 +1,4 @@
-"""solar_calc.py  v1.3.0
+"""solar_calc.py  v1.4.0
 Солнечный калькулятор — точка входа: авто-установка библиотек, запуск окна, --selftest.
 Расчёт: солнце → угол/азимут → панели → схема Ns×Np → провод и контакты → MPPT (встроенный в инвертор
 или отдельный) → ток заряда → АКБ → инвертор. Данные солнца: встроенные (≈Киев) или PVGIS.
@@ -10,6 +10,9 @@
   modules/mod_*.py      расчёт, данные, оборудование, виджеты, страницы
 
 Журнал:
+v1.4.0: погода (Open-Meteo), небо (Солнце, Луна, звёзды, созвездия) и прогноз выработки по погоде —
+        из Smart_BMS 4.81, согласовано со станцией: одна формула Солнца (NOAA) для расчёта и неба,
+        место и пояс (с летним временем ЕС) — из настроек, наклон и азимут панелей — станции.
 v1.3.0: программа разбита на модули; карточка «Моя станция» (панели × шт, инвертор, MPPT встроенный
         или отдельный — карточка MPPT только для отдельного), гибридные инверторы с MPPT-входами,
         расширенная база панелей, инверторов, MPPT-контроллеров и АКБ.
@@ -20,7 +23,7 @@ v1.1.0: инвертор, провода к АКБ и инвертору, акк
 v1.0.0: первая версия — солнце (встроенное + PVGIS), схемы Ns×Np, провод, окно MPPT, потери по этапам.
 """
 APP_NAME = "Солнечный калькулятор"
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 import sys
 import os
@@ -113,7 +116,9 @@ from modules.mod_model import compute_all
 MODULES = ("modules.mod_base", "modules.mod_panels", "modules.mod_equipment", "modules.mod_sun",
            "modules.mod_fields", "modules.mod_config", "modules.mod_model", "modules.mod_checks",
            "modules.mod_pvgis", "modules.mod_theme", "modules.mod_widgets", "modules.mod_page_settings",
-           "modules.mod_page_results", "modules.mod_page_tools", "solar_calc_qt")
+           "modules.mod_page_results", "modules.mod_page_tools", "modules.mod_astro", "modules.mod_stars",
+           "modules.mod_weather", "modules.mod_forecast", "modules.mod_wx_draw", "modules.mod_sky",
+           "modules.mod_page_sky", "solar_calc_qt")
 
 
 def _excepthook(tp, val, tb):

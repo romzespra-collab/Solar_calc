@@ -1,7 +1,9 @@
-"""solar_calc_qt.py  v1.3.0
+"""solar_calc_qt.py  v1.4.0
 Главное окно программы (PySide6): боковая панель, страницы, лог, статус.
 
 Журнал:
+v1.4.0: страницы «🌤 Погода» (погода + выработка по прогнозу) и «🌌 Небо», опрос погоды, разделитель
+        в боковой панели по имени страницы.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; страницы — миксины из modules/mod_page_*.py.
 """
 import base64
@@ -28,9 +30,11 @@ from modules.mod_widgets import app_name, app_version, Segmented, NoWheelCombo, 
 from modules.mod_page_settings import SettingsPage
 from modules.mod_page_results import ResultsPages
 from modules.mod_page_tools import ToolPages
+from modules.mod_page_sky import SkyPages
+from modules.mod_weather import WeatherState
 
 
-class App(SettingsPage, ResultsPages, ToolPages, QMainWindow):
+class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
     """Главное окно: каркас, пересчёт, тема, лог, профили. Страницы — в modules/mod_page_*.py."""
 
     def __init__(self):
@@ -47,6 +51,8 @@ class App(SettingsPage, ResultsPages, ToolPages, QMainWindow):
         self.toggles = []
         self.charts = []
         self.worker = Worker()
+        self.wx = WeatherState()
+        self.wx.apply(dict(on=bool(self.cfg["weather"]["on"]), model=self.cfg["weather"]["model"]))
         self._recalc_timer = QTimer(self)
         self._recalc_timer.setSingleShot(True)
         self._recalc_timer.timeout.connect(self.recalc)
@@ -64,6 +70,7 @@ class App(SettingsPage, ResultsPages, ToolPages, QMainWindow):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._drain_log)
         self._timer.start(150)
+        self._wx_init()
         log.info(f"✓ {app_name()} v{app_version()} запущен")
         self.recalc()
 
@@ -86,6 +93,8 @@ class App(SettingsPage, ResultsPages, ToolPages, QMainWindow):
         pages = [("📊", "Прогноз выработки", "forecast", self._page_forecast()),
                  ("🏠", "Покрытие дома: хватит ли станции", "home", self._page_home()),
                  ("🔌", "Когда переходить на горсеть", "grid", self._page_grid()),
+                 ("🌤", "Погода и выработка по прогнозу", "weather", self._page_weather()),
+                 ("🌌", "Небо: Солнце, Луна, звёзды над станцией", "sky", self._page_sky()),
                  ("⚙", "Настройки станции", "settings", self._page_settings()),
                  ("🔀", "Сравнение схем S×P", "schemes", self._page_schemes()),
                  ("📐", "Подбор угла и азимута", "tilt", self._page_tilt()),
@@ -94,7 +103,7 @@ class App(SettingsPage, ResultsPages, ToolPages, QMainWindow):
                  ("🎨", "Цвета", "colors", self._page_colors())]
         self.page_names = [p[2] for p in pages]
         self.page_idx = {n: i for i, n in enumerate(self.page_names)}
-        for i, (ico, tip, _name, page) in enumerate(pages):
+        for i, (ico, tip, name, page) in enumerate(pages):
             b = QToolButton()
             b.setText(ico)
             b.setToolTip(tip)
@@ -104,7 +113,7 @@ class App(SettingsPage, ResultsPages, ToolPages, QMainWindow):
             self.side_group.addButton(b, i)
             if i == len(pages) - 1:
                 sv.addStretch(1)
-            if i == 4:
+            if name == "schemes":
                 sep = QFrame()
                 sep.setFixedHeight(1)
                 sep.setObjectName("sideSep")
@@ -226,11 +235,14 @@ class App(SettingsPage, ResultsPages, ToolPages, QMainWindow):
         dt = (time.perf_counter() - t0) * 1000
         self._show_results()
         self._status(f"расчёт {dt:.0f} мс")
+        self._wx_place_changed()
         cur = self.page_names[self.stack.currentIndex()]
         if cur in ("schemes", "tilt", "wire"):
             self._refresh_page(cur)
         elif cur == "data":
             self._fill_data_table()
+        elif cur in ("weather", "sky"):
+            self._wx_refresh()
 
     def _set_theme(self, k):
         self.cfg["theme"] = k
@@ -250,6 +262,8 @@ class App(SettingsPage, ResultsPages, ToolPages, QMainWindow):
             t.set_theme(p["accent"], off, p["text"])
         for c in self.charts:
             c.set_theme(p)
+        if hasattr(self, "wxpane"):
+            self.wxpane.update()
 
     def _log_card(self):
         fr, v = _card("Лог")
@@ -333,6 +347,8 @@ class App(SettingsPage, ResultsPages, ToolPages, QMainWindow):
             self._refresh_page(name)
         elif name == "data":
             self._fill_data_table()
+        elif name in ("weather", "sky"):
+            self._wx_refresh()
 
     def _refresh_page(self, i, force=False):
         if not force and self.page_gen.get(i) == self.gen:
@@ -422,5 +438,8 @@ class App(SettingsPage, ResultsPages, ToolPages, QMainWindow):
         self._status("сохранено")
 
     def closeEvent(self, e):
+        win = getattr(self, "_skywin", None)
+        if win is not None:
+            win.close()
         self._save_all()
         super().closeEvent(e)
