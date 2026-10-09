@@ -1,10 +1,11 @@
-"""mod_forecast.py  v1.4.0
+"""mod_forecast.py  v1.9.0
 Прогноз выработки по погоде: радиация Open-Meteo по часам → та же цепочка, что и весь расчёт
 (положение Солнца mod_sun → плоскость панелей → панели/провод/MPPT → АКБ → дом). По дням:
 кВт·ч в АКБ, на какой «типовой день» месяца похоже (ясно/средне/пасмурно), заряд АКБ по 10 минутам,
 переход на сеть.
 
 Журнал:
+v1.9.0: разные поля панелей — облучённость считается для каждого поля (свой угол и азимут).
 v1.4.0: первая версия.
 """
 
@@ -13,7 +14,7 @@ import math
 
 from .mod_astro import to_utc, to_local, sun_altaz_utc
 from .mod_base import W_KEYS
-from .mod_model import make_ctx, sim_point, load_day_wh, soc_run, NST
+from .mod_model import make_ctx, sim_point, load_day_wh, soc_run, NST, pv_fields, field_sun
 from .mod_sun import sun, poa, panel_geom, DT, N_STEPS
 
 H = dt.timedelta(hours=1)
@@ -52,6 +53,8 @@ def run(s, fc, res=None, soc0=70.0, days=None):
     if not fc:
         return dict(days=[], start=None)
     c = make_ctx(s)
+    specs = [field_sun(s, fl) for fl in pv_fields(s)]                 # у каждого поля свой угол и азимут
+    wts = [f["pstc_tot"] / max(1.0, c["pstc_tot"]) for f in c["fields"]]
     lat, lon = float(s["lat"]), float(s["lon"])
     zone = (s["tz"], s["dst"])
     ghi = _series(fc, "ghi", H / 2)
@@ -89,8 +92,9 @@ def run(s, fc, res=None, soc0=70.0, days=None):
             sd = _interp(snow, x) if snow else None
             alb = 0.6 if (sd or 0) > 0.02 else (0.35 if m in (0, 1, 11) else 0.2)
             cosz, zen, az, g0 = sun(lat, lon, u.timetuple().tm_yday, u.hour + u.minute / 60.0 + u.second / 3600.0)
-            irr = poa(G, D, cosz, zen, az, g0, panel_geom(s, alb))
-            r = sim_point(c, irr, ta)
+            irrs = [poa(G, D, cosz, zen, az, g0, panel_geom(sp, alb)) for sp in specs]
+            irr = sum(w * x for w, x in zip(wts, irrs))
+            r = sim_point(c, irrs, ta)
             for k in range(NST):
                 acc[k] += r[k] * DT
             g_wh += G * DT
@@ -120,9 +124,12 @@ def now_power(s, cur, utc=None):
     lat, lon = float(s["lat"]), float(s["lon"])
     m = to_local(utc, (s["tz"], s["dst"])).month - 1
     cosz, zen, az, g0 = sun(lat, lon, utc.timetuple().tm_yday, utc.hour + utc.minute / 60.0)
-    irr = poa(max(0.0, G), None if D is None else max(0.0, min(G, D)), cosz, zen, az, g0,
-              panel_geom(s, 0.35 if m in (0, 1, 11) else 0.2))
-    return sim_point(make_ctx(s), irr, ta)[8], irr
+    c = make_ctx(s)
+    alb = 0.35 if m in (0, 1, 11) else 0.2
+    irrs = [poa(max(0.0, G), None if D is None else max(0.0, min(G, D)), cosz, zen, az, g0, panel_geom(field_sun(s, fl), alb))
+            for fl in pv_fields(s)]
+    irr = sum(f["pstc_tot"] / max(1.0, c["pstc_tot"]) * x for f, x in zip(c["fields"], irrs))
+    return sim_point(c, irrs, ta)[8], irr
 
 
 def sun_now(s, utc=None):

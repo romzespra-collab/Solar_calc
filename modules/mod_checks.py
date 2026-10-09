@@ -1,7 +1,8 @@
-"""mod_checks.py  v1.7.0
+"""mod_checks.py  v1.9.0
 проверки схемы, проводов, MPPT, АКБ, инвертора
 
 Журнал:
+v1.9.0: проверки каждого поля на своём входе MPPT / контроллере; полей больше, чем входов у инвертора, — ошибка.
 v1.7.0: разные сборки АКБ: состав банка, разная химия — ошибка, разное напряжение сборок — предупреждение.
 v1.5.1: АКБ задаются сборками — проверок «мало АКБ» и «лишние АКБ» больше нет.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; проверки на один вход MPPT (k входов/контроллеров),
@@ -9,7 +10,7 @@ v1.3.0: вынесено из solar_calc.pyw v1.2.1; проверки на од�
 """
 
 from .mod_base import MONTHS_S, DAYS
-from .mod_model import wire_r, year_kwh, ampacity, bank_desc, group_name
+from .mod_model import wire_r, year_kwh, ampacity, bank_desc, group_name, field_label, field_status, inv_inputs_used, plural
 
 
 def make_checks(s, c, res):
@@ -51,6 +52,20 @@ def make_checks(s, c, res):
         ch.append(("warn", f"Isc на вход {isc_arr:.1f} А > макс. входного тока MPPT {c['iin_max']:.0f} А — MPPT будет срезать."))
     if np_ >= 3:
         ch.append(("warn", f"{np_} параллельных цепочки{per} — нужен предохранитель на каждую (обратный ток при КЗ)."))
+    # другие поля: каждое на своём входе MPPT / своём контроллере
+    for i, fc in enumerate(c["fields"][1:], 1):
+        lvl, msg, n = field_status(fc, tmin, tmax)
+        lab = field_label(c, i)
+        what = (f"{lab[:1].upper() + lab[1:]}: {n['npan']} {plural(n['npan'], 'панель', 'панели', 'панелей')} "
+                f"({fc['ns']} посл. × {fc['np']} пар.), "
+                f"Vmp {n['vmp']:.0f} В, Voc на морозе {n['voc_cold']:.0f} В, ток {n['i']:.1f} А")
+        ch.append((lvl, what + (f" — {msg}." if msg else " — в норме.")))
+    used = inv_inputs_used(c)
+    nmax = int(float(s["n_mppt_max"]))
+    if used > nmax:
+        ch.insert(0, ("err", (f"Полей на {used} входов MPPT, а у инвертора {nmax}." if c["builtin"] else
+                              f"Полей на {used} контроллеров, а указано {nmax} шт.")
+                      + " Уберите поле или подключите два поля на один вход только с одинаковыми панелями и схемой."))
     if year_kwh(res, "clear") < 0.02 * c["pstc_tot"] / 1000 * 365:
         ch.insert(0, ("err", f"MPPT почти не запускается: Vmp цепочки {ns * c['vmp']:.1f} В, а нужно больше {c['vin_min']:.1f} В. Больше панелей последовательно."))
     clip_y = sum((res[(m, 'avg')]['wh'][6] - res[(m, 'avg')]['wh'][7]) * DAYS[m] for m in range(12)) / 1000

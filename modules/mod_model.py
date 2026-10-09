@@ -1,7 +1,11 @@
-"""mod_model.py  v1.8.0
+"""mod_model.py  v1.9.0
 физика станции: панели → провод → MPPT → АКБ → инвертор; заряд АКБ по 10 минутам
 
 Журнал:
+v1.9.0: разные поля панелей (pv_fields): основное + другие на входах инвертора (s["pv_extra"]) + отдельные
+        MPPT-контроллеры на АКБ со своим полем (s["ctl_extra"], до 6) — у каждого поля своя панель, схема,
+        угол и азимут; солнце считается по каждому полю, мощности складываются; пределы: мощность PV гибрида —
+        на его входы, ток заряда — у каждого контроллера свой, кабель контроллер→АКБ — у каждого свой.
 v1.8.0: подписи раскладки с входами MPPT (layout_text, inputs_word, plural) — сколько панелей на каждый вход.
 v1.7.0: разные сборки АКБ параллельно (bank_groups): основная + до 5 других из базы (s["bat_extra"]);
         ёмкость, полезная энергия и ток заряда складываются, у каждой сборки — своя последовательность.
@@ -15,7 +19,8 @@ v1.3.0: вынесено из solar_calc.pyw v1.2.1; поле из k одина�
 import math
 
 from .mod_base import DAYS, W_KEYS
-from .mod_equipment import load_profile, CONTACT_MOHM, MAT, AMP_CU, AMP_AL, BATTERY_DB
+from .mod_equipment import load_profile, CONTACT_MOHM, MAT, AMP_CU, AMP_AL, BATTERY_DB, MPPT_DB
+from .mod_panels import PANEL_DB
 from .mod_sun import DT, irr_day
 
 
@@ -82,28 +87,87 @@ def bank_desc(c):
     return " + ".join(f"{gr['nser']}S{gr['n']}P {group_name(gr)}" for gr in c["groups"])
 
 
-def make_ctx(s):
-    """Предрасчёт констант системы для быстрой симуляции."""
+PANEL_KEYS = ("pmax", "vmp", "imp", "voc", "isc", "gamma", "bvoc", "noct", "lowlight")
+
+
+def pv_fields(s):
+    """Поля панелей: основное (паспорт и схема из s, на n_in входов) + другие (s["pv_extra"]) — каждое на свой
+    вход MPPT (или свой контроллер), со своей панелью, схемой, углом и азимутом.
+    → [dict(key, p=паспорт, ns, np, k=входов, tilt, aspect)]."""
+    grp = "inv" if s.get("mppt_mode") == "builtin" else "ctl"     # входы инвертора / контроллеры из s
+    out = [dict(key=s.get("p_preset", "custom"), p={k: float(s[k]) for k in PANEL_KEYS},
+                ns=max(1, int(s["ns"])), np=max(1, int(s["np"])), k=max(1, int(s.get("n_in", 1))),
+                tilt=float(s["tilt"]), aspect=float(s["aspect"]), grp=grp, mp=None, ctl=None)]
+    for src, g in ((s.get("pv_extra") or [], grp), (s.get("ctl_extra") or [], "ext")):
+        for it in src:
+            d = PANEL_DB.get(it.get("preset")) if isinstance(it, dict) else None
+            if not d:
+                continue
+            mp = None
+            if g == "ext":                          # отдельный MPPT-контроллер на АКБ со своим полем
+                md = MPPT_DB.get(it.get("mppt"))
+                if not md:
+                    continue
+                mp = md[2]
+            out.append(dict(key=it["preset"], p={k: float(d[2][k]) for k in PANEL_KEYS},
+                            ns=max(1, int(it.get("ns", 1))), np=max(1, int(it.get("np", 1))), k=1,
+                            tilt=float(it.get("tilt", s["tilt"])), aspect=float(it.get("aspect", s["aspect"])),
+                            grp="ctl" if g == "ext" else g, mp=mp, ctl=it.get("mppt") if g == "ext" else None))
+    return out
+
+
+def field_sun(s, fl):
+    """Параметры станции для расчёта солнца на плоскости поля (свой угол и азимут)."""
+    return s if (fl["tilt"], fl["aspect"]) == (float(s["tilt"]), float(s["aspect"])) else \
+        dict(s, tilt=fl["tilt"], aspect=fl["aspect"])
+
+
+def _field_ctx(s, fl, first):
+    """Константы одного поля (на fl["k"] одинаковых входов) для sim_point. MPPT — инвертора / контроллера из s
+    или своего контроллера поля (fl["mp"])."""
     f = lambda k: float(s[k])
-    ns, np_ = max(1, int(s["ns"])), max(1, int(s["np"]))
-    k = max(1, int(s.get("n_in", 1)))                 # входов MPPT / контроллеров, на каждом ns × np
-    builtin = s.get("mppt_mode") == "builtin"
+    mp = fl["mp"]
+    m = (lambda k: float(mp.get(k, 0) or 0)) if mp else f
+    inv = fl["grp"] == "inv"
+    p = fl["p"]
+    ns, np_, k = fl["ns"], fl["np"], fl["k"]
     rho, a = MAT.get(s["wire_mat"], MAT["cu"])
     rc = CONTACT_MOHM.get(s["contact"], 1.0) / 1000.0
-    gam = f("gamma") / 100.0
-    c = dict(
-        ns=ns, np=np_, k=k, builtin=builtin, npan=k * ns * np_, pmax=f("pmax"), vmp=f("vmp"), imp=f("imp"), voc=f("voc"),
-        isc=f("isc"), gam=gam, bvmp=gam - 0.0004, bvoc=f("bvoc") / 100.0,
-        noctk=(f("noct") - 20.0) / 800.0, llk=(1 - f("lowlight") / 100.0) / LN5,
+    gam = p["gamma"] / 100.0
+    fc = dict(
+        key=fl["key"], tilt=fl["tilt"], aspect=fl["aspect"], grp=fl["grp"], ctl=fl["ctl"],
+        ns=ns, np=np_, k=k, npan=k * ns * np_, pmax=p["pmax"], vmp=p["vmp"], imp=p["imp"], voc=p["voc"],
+        isc=p["isc"], gam=gam, bvmp=gam - 0.0004, bvoc=p["bvoc"] / 100.0,
+        noctk=(p["noct"] - 20.0) / 800.0, llk=(1 - p["lowlight"] / 100.0) / LN5,
         soil=f("soiling") / 100.0, mmk=(1 - f("mismatch") / 100.0) * f("calib") / 100.0,
         rw20=rho * 2 * f("wire_len") / max(0.1, f("wire_s")), walpha=a,
         rconst=f("n_main") * rc + (ns + 1) * rc / np_,
-        vin_min=max(f("vmpp_min"), f("bat_ch") + f("headroom")),
-        vmpp_max=f("vmpp_max"), v_max=f("v_max"), iin_max=f("iin_max"),
-        eta=f("eta") / 100.0, etak=f("eta_k") / 100.0, own=f("own_w") * (1 if builtin else k), vbat=max(1.0, f("bat_ch")),
-        eta_bat=f("eta_bat") / 100.0, inv_eta=f("inv_eta") / 100.0, inv_idle=f("inv_idle"),
+        vin_min=max(m("vmpp_min"), f("bat_ch") + m("headroom")),
+        vmpp_max=m("vmpp_max"), v_max=m("v_max"), iin_max=m("iin_max"),
+        eta=m("eta") / 100.0, etak=m("eta_k") / 100.0, vbat=max(1.0, f("bat_ch")),
+        # свой расход: у гибрида — один раз на весь инвертор, у отдельных контроллеров — каждый
+        own=m("own_w") * ((1 if first else 0) if inv else k),
+        # предел выхода поля: контроллер — его ток заряда (× k шт); входы инвертора — общий предел (ниже)
+        cap=1e12 if inv else m("iout_max") * k * max(1.0, f("bat_ch")),
+        iout=0.0 if inv else m("iout_max") * k,
     )
-    c["pstc_tot"] = c["pmax"] * c["npan"]
+    fc["pstc_tot"] = fc["pmax"] * fc["npan"]
+    return fc
+
+
+def make_ctx(s):
+    """Предрасчёт констант системы для быстрой симуляции. Ключи поля верхнего уровня — основного поля;
+    c["fields"] — все поля (по входам MPPT), npan / pstc_tot — по всем полям."""
+    f = lambda k: float(s[k])
+    builtin = s.get("mppt_mode") == "builtin"
+    rc = CONTACT_MOHM.get(s["contact"], 1.0) / 1000.0
+    fields = [_field_ctx(s, fl, i == 0) for i, fl in enumerate(pv_fields(s))]
+    mixed = builtin and any(fc["grp"] == "ctl" for fc in fields)   # гибрид + отдельные контроллеры на АКБ
+    c = dict(fields[0])
+    c.update(builtin=builtin, mixed=mixed, fields=fields, main_npan=c["npan"], main_pstc=c["pstc_tot"],
+             npan=sum(fc["npan"] for fc in fields), k_tot=sum(fc["k"] for fc in fields),
+             eta_bat=f("eta_bat") / 100.0, inv_eta=f("inv_eta") / 100.0, inv_idle=f("inv_idle"))
+    c["pstc_tot"] = sum(fc["pstc_tot"] for fc in fields)
     # провода со стороны АКБ: 4 контакта на линию (наконечники + автомат/предохранитель);
     # опрессованный силовой наконечник ≈ в 3 раза лучше разъёма MC4 того же «качества»
     rcb = rc * 0.3
@@ -120,9 +184,11 @@ def make_ctx(s):
     c["bank_wh"] = sum(gr["n"] * gr["ah"] * gr["v"] for gr in groups)
     c["usable_wh"] = sum(gr["n"] * gr["ah"] * gr["v"] * gr["dod"] / 100.0 * tf(gr["chem"]) for gr in groups)
     c["bank_ich"] = sum(gr["n"] * gr["ah"] * gr["c"] for gr in groups)
-    iout = f("iout_max") * (1 if builtin else k)          # у отдельных контроллеров токи складываются
+    # ток заряда: встроенный MPPT инвертора + все контроллеры (у отдельных контроллеров токи складываются)
+    iout = (f("iout_max") if builtin else 0.0) + sum(fc["iout"] for fc in fields)
     c["iout_tot"] = iout
     c["ilim"] = min(iout, c["bank_ich"]) if c["bank_ich"] > 0 else iout
+    c["rb_ctl"] = c["rb"]                             # кабель отдельного контроллера до АКБ
     if builtin:
         # гибрид: MPPT кормит и дом, и АКБ — режет только предел мощности PV; ток заряда — при заряде АКБ
         c["rb"] = 0.0
@@ -145,12 +211,12 @@ def wire_r(c, ta):
     return c["rw20"] * (1 + c["walpha"] * (ta - 10.0)) + c["rconst"]
 
 
-def sim_point(c, poa, ta):
-    """→ (pot, soil, cell, mm, arr, pin, conv, out, outb, vin, I, vp, tc, R).
+def _sim_field(c, poa, ta):
+    """Одно поле (c — его константы) → (pot, soil, cell, mm, arr, pin, conv, vin, I, vp, tc, R).
     Мощности — по всему полю (k входов), vin / I / vp / R — на один вход MPPT."""
     pot = c["pstc_tot"] * poa / 1000.0
     if poa < 1.0:
-        return (pot, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ta, wire_r(c, ta))
+        return (pot, 0, 0, 0, 0, 0, 0, 0, 0, 0, ta, wire_r(c, ta))
     G = poa * (1 - c["soil"])
     soil = c["pstc_tot"] * G / 1000.0
     tc = ta + c["noctk"] * G
@@ -163,7 +229,7 @@ def sim_point(c, poa, ta):
     cell = pmp * c["npan"]
     R = wire_r(c, ta)
     if pmp <= 0:
-        return (pot, soil, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, tc, R)
+        return (pot, soil, 0, 0, 0, 0, 0, 0, 0, 0, tc, R)
     imp = pmp / vmp
     Va = c["ns"] * vmp
     Ia = c["np"] * imp * c["mmk"]
@@ -184,7 +250,7 @@ def sim_point(c, poa, ta):
     if c["iin_max"] > 0 and I > c["iin_max"]:
         I = c["iin_max"]
     if I <= 0 or Ia <= 0:
-        return (pot, soil, cell, mm, 0, 0, 0, 0, 0, 0, 0, Vo, tc, R)
+        return (pot, soil, cell, mm, 0, 0, 0, 0, 0, Vo, tc, R)
     I = min(I, Ia)
     Vp = vtop + I * R if top else Va + (Ia - I) / Ia * dV
     arr = Vp * I * k
@@ -192,22 +258,59 @@ def sim_point(c, poa, ta):
     pin = arr - k * I * I * R
     eta = c["eta"] - c["etak"] * max(0.0, vin / c["vbat"] - 1)
     conv = max(0.0, pin * eta - c["own"])
-    out = min(conv, c["pout_max"])
-    ich = out / c["vbat"]
-    outb = max(0.0, out - ich * ich * c["rb"])
-    return (pot, soil, cell, mm, arr, pin, conv, out, outb, vin, I, Vp, tc, R)
+    return (pot, soil, cell, mm, arr, pin, conv, vin, I, Vp, tc, R)
+
+
+def sim_point(c, poa, ta):
+    """→ (pot, soil, cell, mm, arr, pin, conv, out, outb, vin, I, vp, tc, R) по всем полям.
+    poa — облучённость плоскости (Вт/м²): число (все поля одинаково) или список по полям c["fields"].
+    vin / I / vp / tc / R — основного поля (на один его вход MPPT)."""
+    fields = c["fields"]
+    if not isinstance(poa, (list, tuple)):
+        poa = [poa] * len(fields)
+    vb = c["vbat"]
+    if len(fields) == 1:
+        r = _sim_field(fields[0], poa[0], ta)
+        out = min(r[6], fields[0]["cap"], c["pout_max"])
+        loss = (out / vb) ** 2 * c["rb"]
+    else:
+        acc, inv, ctl, loss, r = [0.0] * 7, 0.0, 0.0, 0.0, None
+        for fc, g in zip(fields, poa):
+            rf = _sim_field(fc, g, ta)
+            for i in range(7):
+                acc[i] += rf[i]
+            if fc["grp"] == "inv":
+                inv += rf[6]
+            else:
+                o = min(rf[6], fc["cap"])           # контроллер режет свой ток заряда
+                ctl += o
+                loss += (o / vb) ** 2 * c["rb_ctl"]  # у каждого контроллера свой кабель до АКБ
+            r = r or rf
+        r = tuple(acc) + r[7:]
+        if c["mixed"]:
+            out = min(inv, c["pout_max"]) + ctl     # предел PV гибрида — только на его входы
+        elif c["builtin"]:
+            out, loss = min(inv, c["pout_max"]), 0.0
+        else:
+            out = min(ctl, c["pout_max"])           # только контроллеры: общий ток в АКБ
+            loss = (out / vb) ** 2 * c["rb"]
+    return r[:7] + (out, max(0.0, out - loss)) + r[7:]
 
 
 NST = 9   # число этапов мощности в кортеже sim_point
 
 
 def run_day(c, pts):
+    """pts — [(час, POA, t воздуха)]; POA — число или список по полям."""
     acc = [0.0] * NST
     curve = []
     peak = 0.0
     peak_i = 0.0
     vin_lo, vin_hi = 1e9, 0.0
+    wts = [fc["pstc_tot"] / max(1.0, c["pstc_tot"]) for fc in c["fields"]]
+    poa_sum = 0.0
     for tl, poa, ta in pts:
+        poa_sum += sum(w * g for w, g in zip(wts, poa)) if isinstance(poa, (list, tuple)) else poa
         r = sim_point(c, poa, ta)
         for k in range(NST):
             acc[k] += r[k] * DT
@@ -218,7 +321,16 @@ def run_day(c, pts):
         if r[8] > 0:
             vin_lo, vin_hi = min(vin_lo, r[9]), max(vin_hi, r[9])
     return {"wh": acc, "curve": curve, "peak": peak, "peak_i": peak_i,
-            "vin": (vin_lo if vin_hi > 0 else 0.0, vin_hi), "poa_wh": sum(p for _, p, _ in pts) * DT}
+            "vin": (vin_lo if vin_hi > 0 else 0.0, vin_hi), "poa_wh": poa_sum * DT}
+
+
+def day_pts(s, sd, m, w):
+    """Солнце на плоскости панелей в средний день: одно поле — [(час, POA, t)], несколько — POA списком по полям."""
+    fls = pv_fields(s)
+    if len(fls) == 1:
+        return irr_day(s, sd, m, w)
+    days = [irr_day(field_sun(s, fl), sd, m, w) for fl in fls]
+    return [(tl, [d[i][1] for d in days], ta) for i, (tl, _, ta) in enumerate(days[0])]
 
 
 def compute_days(s, sd, months=range(12), weathers=W_KEYS):
@@ -226,7 +338,7 @@ def compute_days(s, sd, months=range(12), weathers=W_KEYS):
     res = {}
     for m in months:
         for w in weathers:
-            res[(m, w)] = run_day(c, irr_day(s, sd, m, w))
+            res[(m, w)] = run_day(c, day_pts(s, sd, m, w))
     return c, res
 
 
@@ -413,6 +525,51 @@ def layouts(n, kmax):
             if m % ns == 0 and m // ns <= 30:
                 out.append((k, ns, m // ns))
     return out
+
+
+def field_label(c, i):
+    """Подпись поля i: «вход 1», «входы 1–2», «контроллер 3», «доп. MPPT 1 (MPPT 60 А / 150 В)»."""
+    fields = c["fields"]
+    fc = fields[i]
+    if fc["ctl"]:                                   # отдельный контроллер со своим полем
+        j = sum(1 for f in fields[:i + 1] if f["ctl"])
+        d = MPPT_DB.get(fc["ctl"])
+        return f"доп. MPPT {j}" + (f" ({d[1]})" if d else "")
+    word = "вход" if c["builtin"] else "контроллер"
+    start = 1 + sum(f["k"] for f in fields[:i] if not f["ctl"])
+    if fc["k"] > 1:
+        return f"{word}ы {start}–{start + fc['k'] - 1}" if c["builtin"] else f"контроллеры {start}–{start + fc['k'] - 1}"
+    return f"{word} {start}"
+
+
+def field_status(fc, tmin, tmax):
+    """Проверка поля на своём MPPT → (уровень, пояснение, цифры: vmp, voc, voc_cold, i, p)."""
+    ns, np_ = fc["ns"], fc["np"]
+    voc_cold = ns * fc["voc"] * (1 + fc["bvoc"] * (tmin - 25))
+    nums = dict(vmp=ns * fc["vmp"], voc=ns * fc["voc"], voc_cold=voc_cold, i=np_ * fc["imp"], p=fc["pstc_tot"],
+                npan=fc["npan"])
+    if voc_cold > fc["v_max"]:
+        return "err", f"Voc на морозе {voc_cold:.0f} В > {fc['v_max']:.0f} В — MPPT сгорит", nums
+    if ns * fc["vmp"] < fc["vin_min"]:
+        return "err", f"Vmp {ns * fc['vmp']:.0f} В < {fc['vin_min']:.0f} В — MPPT не запустится", nums
+    msgs = []
+    tc_hot = tmax + fc["noctk"] * 1000
+    vmp_hot = ns * fc["vmp"] * (1 + fc["bvmp"] * (tc_hot - 25))
+    if vmp_hot < fc["vin_min"]:
+        msgs.append(f"в жару Vmp ≈{vmp_hot:.0f} В < {fc['vin_min']:.0f} В")
+    vmp_cold = ns * fc["vmp"] * (1 + fc["bvmp"] * (tmin - 25))
+    if fc["vmpp_max"] > 0 and vmp_cold > fc["vmpp_max"]:
+        msgs.append(f"на морозе Vmp {vmp_cold:.0f} В выше окна {fc['vmpp_max']:.0f} В")
+    if fc["iin_max"] > 0 and np_ * fc["imp"] > fc["iin_max"]:
+        msgs.append(f"ток {np_ * fc['imp']:.1f} А > {fc['iin_max']:.0f} А на вход — срезка")
+    if voc_cold > 0.95 * fc["v_max"]:
+        msgs.append(f"Voc на морозе {voc_cold:.0f} В — впритык к {fc['v_max']:.0f} В")
+    return ("warn" if msgs else "ok"), "; ".join(msgs), nums
+
+
+def inv_inputs_used(c):
+    """Сколько входов MPPT инвертора (или контроллеров основной модели) занято полями."""
+    return sum(fc["k"] for fc in c["fields"] if not fc["ctl"])
 
 
 def layout_status(s, k, ns, np_):

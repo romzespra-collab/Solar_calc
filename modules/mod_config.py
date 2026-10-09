@@ -1,7 +1,9 @@
-"""mod_config.py  v1.7.0
+"""mod_config.py  v1.9.0
 параметры станции по умолчанию, config.json: загрузка, проверка, сохранение
 
 Журнал:
+v1.9.0: pv_extra — поля на других входах MPPT инвертора [{preset, ns, np, tilt, aspect}] (до 11);
+        ctl_extra — отдельные MPPT-контроллеры на АКБ со своим полем [{mppt, preset, ns, np, tilt, aspect}] (до 6).
 v1.7.0: bat_extra — другие сборки АКБ параллельно: [{preset, n}], до 5, модель — из базы, n 1–10.
 v1.5.1: АКБ — bat_packs (сборок 1–10); старое bat_count (всего штук) переводится в сборки.
 v1.4.0: place (город), fc_soc0 (заряд АКБ для прогноза по погоде); настройки погоды и неба
@@ -19,9 +21,29 @@ from .mod_base import CONFIG_PATH, WEATHER, log
 from .mod_sun import BUILTIN_SUN
 from .mod_fields import ALL_FIELDS, INT_KEYS, WIRE_RANGE
 from .mod_model import bank_series
-from .mod_equipment import BATTERY_DB
+from .mod_equipment import BATTERY_DB, MPPT_DB
+from .mod_panels import PANEL_DB
 
 BAT_EXTRA_MAX = 5           # других сборок АКБ (кроме основной)
+PV_EXTRA_MAX = 11           # полей на других входах MPPT инвертора (входов до 12)
+CTL_EXTRA_MAX = 6           # отдельных MPPT-контроллеров на АКБ со своим полем
+
+
+def _field_item(it, s, ctl=False):
+    """Поле из config/профиля → проверенный dict или None."""
+    if not isinstance(it, dict) or str(it.get("preset")) not in PANEL_DB:
+        return None
+    if ctl and str(it.get("mppt")) not in MPPT_DB:
+        return None
+    try:
+        lim = lambda v, lo, hi, d: min(hi, max(lo, float(v if v is not None else d)))
+        out = dict(preset=str(it["preset"]), ns=int(lim(it.get("ns"), 1, 40, 1)), np=int(lim(it.get("np"), 1, 30, 1)),
+                   tilt=lim(it.get("tilt"), 0, 90, s["tilt"]), aspect=lim(it.get("aspect"), -180, 180, s["aspect"]))
+    except (TypeError, ValueError):
+        return None
+    if ctl:
+        out["mppt"] = str(it["mppt"])
+    return out
 
 
 DEFAULT_SYS = dict(
@@ -34,7 +56,7 @@ DEFAULT_SYS = dict(
     m_preset="cn60", v_max=150, vmpp_min=0, vmpp_max=145, iin_max=0, iout_max=60, eta=96, eta_k=3,
     own_w=4, headroom=3, mppt_mode="separate", n_mppt_max=1, pv_pmax=0,
     wire_mode="s", bw_len=1.5, bw_s=25, bw_mat="cu", iw_len=1.5, iw_s=35, iw_mat="cu",
-    bat_preset="eve_lf280k", bat_v="48", chem="lfp", bat_unit_v=3.2, bat_ah=280, bat_packs=1, bat_extra=[], bat_dod=90,
+    bat_preset="eve_lf280k", bat_v="48", chem="lfp", bat_unit_v=3.2, bat_ah=280, bat_packs=1, bat_extra=[], pv_extra=[], ctl_extra=[], bat_dod=90,
     bat_c=0.5, t_bat=15, bat_ch=56.8, eta_bat=97,
     inv_preset="hyb5", inv_p=6000, inv_eta=92, inv_idle=50, inv_hours=24, inv_bat_v=48,
     load_mode="m", load_kwh=250, load_winter=30, night_share=50, load_profile="typ",
@@ -95,6 +117,9 @@ def clean_sys(d):
         except (TypeError, ValueError):
             pass
     out["bat_extra"] = ex
+    for key, mx, ctl in (("pv_extra", PV_EXTRA_MAX, False), ("ctl_extra", CTL_EXTRA_MAX, True)):
+        src = d.get(key) if isinstance(d.get(key), list) else []
+        out[key] = [x for x in (_field_item(it, out, ctl) for it in src) if x][:mx]
     out["n_in"] = min(out["n_in"], out["n_mppt_max"])
     out["n_pan"] = out["n_in"] * out["ns"] * out["np"]      # количество панелей = входы × S × P
     return out
