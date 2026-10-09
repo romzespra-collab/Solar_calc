@@ -1,4 +1,4 @@
-solar_calc  v1.5.1
+solar_calc  v1.6.0
 ══════════════════
 
 Калькулятор выработки солнечной станции с MPPT и АКБ.
@@ -10,7 +10,7 @@ solar_calc  v1.5.1
     🔎 — поиск по всей базе: «risen 330», «RSM72», «tiger 440» (слова в любом порядке);
   • схема: последовательно × параллельно и на сколько входов MPPT — список с проверкой
     (✓ / ⚠ / ✗), кнопка ★ «Лучшая» подбирает схему с наибольшей выработкой без ошибок;
-  • инвертор: гибрид (MPPT встроен — его окно, входы, ток на вход, мощность PV и ток заряда
+  • инвертор: производитель → 12 / 24 / 48 В → модель; гибрид (MPPT встроен — его окно, входы, ток на вход, мощность PV и ток заряда
     берутся из паспорта) или инвертор без MPPT;
   • MPPT: «встроенный в инвертор» или «отдельный контроллер» × сколько штук.
     Карточка MPPT и провод MPPT→АКБ показываются только для отдельного контроллера;
@@ -56,8 +56,13 @@ solar_calc  v1.5.1
     AIKO, Tongwei, DAH, Huasun, Sunova, Ulica, Leapton, Abi-Solar, Victron, Axioma + типовые.
     Серия «RSM72-6-xxxP» — xxx = мощность. В описании модели: «паспорт ✓» / «база CEC» — откуда данные;
     «как у …» или «≈ типовые» — температурного коэффициента в паспорте не было.
-  • инверторы — 53 (41 гибрид со встроенным MPPT): Deye, Must, Axioma, Anern, Growatt, Luxpower,
-    EASun, SRNE, PowMr, Voltronic Axpert, Solis, Sofar, Victron (MultiPlus/Phoenix/EasySolar);
+  • инверторы — 181: на 12 В — 61, на 24 В — 71, на 48 В — 47. Выбор: производитель → напряжение АКБ
+    (с MPPT — гибрид / без MPPT) → модель. Гибриды: Deye, Must PV18, Axioma ISMPPT, Voltronic Axpert, EASun,
+    PowMr, SRNE, Growatt SPF, Felicity, Anern, Luxpower, Solis, Sofar, Victron EasySolar, LogicPower,
+    Volt Polska; без MPPT: Victron Phoenix / MultiPlus, Mean Well, LogicPower, Volt Polska, Must EP,
+    Luxeon, Axioma. Инвертор на 12/24 В сам переключает напряжение системы и сборку АКБ.
+    В описании: «х.х. … (паспорт)» или «(оценка)»; «КПД ≥… нижняя граница» — так в паспорте;
+    «встроен PWM» — PWM-зарядник в расчёте не учитывается (как без MPPT);
   • MPPT-контроллеры — 30: Victron SmartSolar/BlueSolar, EPEver, SRNE, PowMr, Must, Renogy;
   • АКБ — 38: Pylontech, Deye, Dyness, Felicity, Must, Axioma, LiTime, Victron, сборки 16S,
     ячейки EVE/REPT, свинец.

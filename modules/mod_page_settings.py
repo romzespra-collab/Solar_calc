@@ -493,8 +493,9 @@ class SettingsPage:
             bv = f"АКБ {pr['inv_bat_v']} В" if pr["inv_bat_v"] else "АКБ любые"
             t = f"{pr['inv_p'] / 1000:g} кВт · {bv} · холостой ход ≈{pr['inv_idle']:g} Вт"
             if mp:
-                t += (f" · MPPT: {mp['n_mppt_max']} вх., {mp['vmpp_min']:g}–{mp['vmpp_max']:g} В (Voc ≤ {mp['v_max']:g} В), "
-                      f"до {mp['iin_max']:g} А на вход" + (f", PV до {mp['pv_pmax'] / 1000:g} кВт" if mp["pv_pmax"] else "")
+                t += (f" · MPPT: {mp['n_mppt_max']} вх., {mp['vmpp_min']:g}–{mp['vmpp_max']:g} В (Voc ≤ {mp['v_max']:g} В)"
+                      + (f", до {mp['iin_max']:g} А на вход" if mp["iin_max"] else "")     # не указан — сказано в описании
+                      + (f", PV до {mp['pv_pmax'] / 1000:g} кВт" if mp["pv_pmax"] else "")
                       + f", заряд до {mp['iout_max']:g} А")
             else:
                 t += " · без MPPT — нужен отдельный контроллер"
