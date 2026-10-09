@@ -90,6 +90,8 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 QSplitter::handle {{ background: {p['bg']}; }}
 QSplitter::handle:hover {{ background: {p['accent']}; }}
 QFileDialog QListView, QFileDialog QTreeView {{ background: {p['panel2']}; }}
-QDialog QListWidget::item {{ padding: 4px 6px; border-radius: 5px; }}
+QDialog QListWidget::item {{ padding: 4px 6px; border-radius: 5px; color: {p['text']}; }}
+QDialog QListWidget::item:hover {{ background: {p['panel2']}; }}
+QDialog QListWidget::item:selected {{ background: {p['accent']}; color: #ffffff; }}
 QFileDialog QToolButton {{ background: {p['panel2']}; border: 1px solid {p['line']}; border-radius: 6px; padding: 3px; }}
 """
