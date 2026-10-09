@@ -1,4 +1,5 @@
-# solar_calc.spec  v1.9.0 — PyInstaller, onefile, без консоли
+# solar_calc.spec  v1.9.1 — PyInstaller, onefile, без консоли
+# v1.9.1: без изменений сборки, версия поднята вместе с программой
 # v1.9.0: + modules/mod_constructor.py (конструктор станции), без mod_scheme
 # v1.5.0: + файл полной базы панелей modules/panels_db.tsv.gz (datas)
 # v1.4.0: + модули погоды, неба, астрономии, прогноза

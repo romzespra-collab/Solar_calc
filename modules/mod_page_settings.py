@@ -1,7 +1,9 @@
-"""mod_page_settings.py  v1.9.0
+"""mod_page_settings.py  v1.9.1
 Страница «Настройки станции»: карточка «Моя станция» (что стоит), поля, пресеты, реакция на изменения.
 
 Журнал:
+v1.9.1: узлы конструктора перетаскиваются мышью; места — в s["cons_pos"] (сохраняются в настройках и профиле),
+        при удалении поля / сборки места следующих сдвигаются.
 v1.9.0: «Моя станция» — конструктор: шаги (инвертор → АКБ → поля → кабели → дом и сеть), холст со схемой
         (во главе инвертор, поля на его входах MPPT, отдельные MPPT — к линии АКБ → инвертор, сборки АКБ, дом,
         сеть), справа — настройки выбранного узла; поля-дубли синхронны с карточками ниже.
@@ -113,6 +115,7 @@ class SettingsPage:
         self.canvas.add.connect(self._cons_add)
         self.canvas.remove.connect(self._cons_remove)
         self.canvas.clone.connect(lambda k, i: self._fx_clone(i))
+        self.canvas.moved.connect(self._cons_moved)
         body.addWidget(self.canvas, 1)
         side = QFrame()
         side.setObjectName("sidePanel")
@@ -521,7 +524,12 @@ class SettingsPage:
             cab, clvl = self._cable_pv(fc)
             tip = f"Поле {i + 1} → {lab}: {fc['npan']} × {pname}\nVmp {n['vmp']:.0f} В, Voc на морозе {n['voc_cold']:.0f} В, " \
                   f"ток {n['i']:.1f} А — {mark} {msg or 'в норме'}"
-            item = dict(idx=i, big=f"{fc['pstc_tot'] / 1000:.2f} кВт", lines=flines, lvl=lvl if clvl == "ok" else
+            if i == 0:
+                nkey = "m"
+            else:
+                fk, fj = self._fx_where(c, i)
+                nkey = ("p" if fk == "pv" else "c") + str(fj)
+            item = dict(idx=i, key=nkey, big=f"{fc['pstc_tot'] / 1000:.2f} кВт", lines=flines, lvl=lvl if clvl == "ok" else
                         ("err" if "err" in (lvl, clvl) else "warn"), cable=cab, tip=tip)
             lines.append(f"  Поле {i + 1} → {lab}: {fc['npan']} × {pname}, {fc['ns']}S×{fc['np']}P, "
                          f"{fc['pstc_tot'] / 1000:.2f} кВт, {fc['tilt']:g}° {_dir_word(fc['aspect'])} — {mark} {msg or 'в норме'}")
@@ -574,7 +582,8 @@ class SettingsPage:
 
     def _cons_update(self, c=None):
         c = c or make_ctx(self.s)
-        self.canvas.set_data(self._graph(c), self._p(), dark=self.cfg.get("theme", "dark") == "dark")
+        self.canvas.set_data(self._graph(c), self._p(), dark=self.cfg.get("theme", "dark") == "dark",
+                             pos=self.s.get("cons_pos") or {})
         # шаги: цвет по проверке
         s = self.s
         tmin, tmax = float(s["t_min"]), float(s["t_max"])
@@ -592,6 +601,30 @@ class SettingsPage:
                 b.style().polish(b)
         yr = f" · ≈{self.R['year']['avg']:,.0f} кВт·ч/год".replace(",", " ") if getattr(self, "R", None) else ""
         self.lab_cons_sum.setText(f"Итог: {c['pstc_tot'] / 1000:.2f} кВт панелей · {c['bank_wh'] / 1000:.1f} кВт·ч АКБ{yr}")
+
+    # ── места узлов (перетащены мышью) ──
+    def _cons_moved(self, pos):
+        self.s["cons_pos"] = dict(pos)                      # новый словарь — не трогаем общий по умолчанию
+
+    def _pos_shift(self, tag, i):
+        """Убрали узел i («p» — поле на входе, «c» — отдельный MPPT, «bat» — сборка): его место забыть,
+        у следующих номер на 1 меньше."""
+        out = {}
+        for k, v in (self.s.get("cons_pos") or {}).items():
+            node, _, t = k.partition(":")
+            if tag == "bat":
+                num, mk = (t if node == "bat" else ""), (lambda n: f"bat:{n}")
+            else:
+                num = t[1:] if node in ("field", "ctl") and t[:1] == tag else ""
+                mk = lambda n, node=node: f"{node}:{tag}{n}"
+            if num.isdigit():
+                n = int(num)
+                if n == i:
+                    continue
+                if n > i:
+                    k = mk(n - 1)
+            out[k] = v
+        self.s["cons_pos"] = out
 
     # ── добавить / убрать / копия ──
     def _cons_add(self, kind):
@@ -611,11 +644,13 @@ class SettingsPage:
 
     def _cons_remove(self, kind, idx):
         if kind == "bat" and idx > 0:
+            self._pos_shift("bat", idx)
             self._bat_extra_del(idx - 1)
             self._cons_pick("bat", 0)
         elif kind == "field" and idx > 0:
             c = make_ctx(self.s)
             k, j = self._fx_where(c, idx)
+            self._pos_shift("p" if k == "pv" else "c", j)
             self._fx_del(k, j)
             self._cons_pick("inv", 0)
 

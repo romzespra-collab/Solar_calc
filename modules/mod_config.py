@@ -1,7 +1,8 @@
-"""mod_config.py  v1.9.0
+"""mod_config.py  v1.9.1
 параметры станции по умолчанию, config.json: загрузка, проверка, сохранение
 
 Журнал:
+v1.9.1: cons_pos — места узлов конструктора, переставленные мышью {ключ: [x, y]} (с проверкой).
 v1.9.0: pv_extra — поля на других входах MPPT инвертора [{preset, ns, np, tilt, aspect}] (до 11);
         ctl_extra — отдельные MPPT-контроллеры на АКБ со своим полем [{mppt, preset, ns, np, tilt, aspect}] (до 6).
 v1.7.0: bat_extra — другие сборки АКБ параллельно: [{preset, n}], до 5, модель — из базы, n 1–10.
@@ -15,6 +16,7 @@ v1.3.0: вынесено из solar_calc.pyw v1.2.1; новые параметр
 
 import json
 import math
+import re
 import os
 
 from .mod_base import CONFIG_PATH, WEATHER, log
@@ -56,7 +58,7 @@ DEFAULT_SYS = dict(
     m_preset="cn60", v_max=150, vmpp_min=0, vmpp_max=145, iin_max=0, iout_max=60, eta=96, eta_k=3,
     own_w=4, headroom=3, mppt_mode="separate", n_mppt_max=1, pv_pmax=0,
     wire_mode="s", bw_len=1.5, bw_s=25, bw_mat="cu", iw_len=1.5, iw_s=35, iw_mat="cu",
-    bat_preset="eve_lf280k", bat_v="48", chem="lfp", bat_unit_v=3.2, bat_ah=280, bat_packs=1, bat_extra=[], pv_extra=[], ctl_extra=[], bat_dod=90,
+    bat_preset="eve_lf280k", bat_v="48", chem="lfp", bat_unit_v=3.2, bat_ah=280, bat_packs=1, bat_extra=[], pv_extra=[], ctl_extra=[], cons_pos={}, bat_dod=90,
     bat_c=0.5, t_bat=15, bat_ch=56.8, eta_bat=97,
     inv_preset="hyb5", inv_p=6000, inv_eta=92, inv_idle=50, inv_hours=24, inv_bat_v=48,
     load_mode="m", load_kwh=250, load_winter=30, night_share=50, load_profile="typ",
@@ -69,6 +71,9 @@ DEFAULT_CONFIG = {"theme": "dark", "geometry": "", "sys": dict(DEFAULT_SYS),
                   "builtin": [list(x) for x in BUILTIN_SUN], "pvgis": None, "use_pvgis": True,
                   "last_dir": "", "weather": {"on": True, "model": "best_match", "poll": 30},
                   "sky": {"names": True, "stars": True, "anim": True}}
+
+
+_POS_KEY = re.compile(r"inv|house|grid|add_pv|add_ctl|add_bat|bat:\d{1,2}|(field|ctl):(m|[pc]\d{1,2})")
 
 
 def clean_sys(d):
@@ -120,6 +125,16 @@ def clean_sys(d):
     for key, mx, ctl in (("pv_extra", PV_EXTRA_MAX, False), ("ctl_extra", CTL_EXTRA_MAX, True)):
         src = d.get(key) if isinstance(d.get(key), list) else []
         out[key] = [x for x in (_field_item(it, out, ctl) for it in src) if x][:mx]
+    pos = {}                                               # места узлов конструктора, переставленные мышью
+    for k, v in (d.get("cons_pos") if isinstance(d.get("cons_pos"), dict) else {}).items():
+        try:
+            if isinstance(k, str) and _POS_KEY.fullmatch(k) and len(v) == 2:
+                x, y = float(v[0]), float(v[1])
+                if math.isfinite(x) and math.isfinite(y):
+                    pos[k] = [int(min(max(x, 0), 4000)), int(min(max(y, 0), 4000))]
+        except (TypeError, ValueError):
+            pass
+    out["cons_pos"] = pos
     out["n_in"] = min(out["n_in"], out["n_mppt_max"])
     out["n_pan"] = out["n_in"] * out["ns"] * out["np"]      # количество панелей = входы × S × P
     return out
