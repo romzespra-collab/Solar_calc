@@ -1,7 +1,9 @@
-"""mod_page_results.py  v1.9.2
+"""mod_page_results.py  v1.9.4
 страницы «Прогноз», «Покрытие дома», «Горсеть», отчёт
 
 Журнал:
+v1.9.4: погода «📍 Регион 5 лет»: карточка дня по региону, линия на графиках, год по региону в карточке «За год»;
+        нет данных региона — «—» и подсказка (линии на графиках нет).
 v1.9.2: «Поле 1: …» — панели и мощность только поля 1 (раньше — всех полей); при нескольких полях — «всего …».
 v1.8.0: «Поле: … · 2 входа MPPT × по 9 панелей (9 посл. × 1 пар.)» — сколько панелей на каждый вход.
 v1.7.0: банк из разных сборок: состав «16S1P LF280K + 16S2P LF105», вес по всем сборкам, в отчёте — состав.
@@ -46,8 +48,9 @@ class ResultsPages:
         self.kpi = {}
         rv.addLayout(self._mw_bar("Прогноз выработки", [_btn("📋 Отчёт", "chip", "Скопировать текстовый отчёт", self.copy_report)]))
         rv.addLayout(self._kpi_grid((("clear", "☀ Ясный день, в АКБ"), ("avg", "⛅ Средний день"),
-                                     ("over", "☁ Пасмурный день"), ("peak", "Пик мощности (ясно)"),
-                                     ("year", "За год (средняя погода)"), ("wire", "Провод + контакты"))))
+                                     ("over", "☁ Пасмурный день"), ("reg", "📍 День по региону (5 лет)"),
+                                     ("peak", "Пик мощности (ясно)"), ("year", "За год (средняя погода)"),
+                                     ("wire", "Провод + контакты")), cols=4))
         fr, v = _card("Мощность по часам — средний день месяца (в АКБ)")
         self.ch_hour = Chart("line", "Вт")
         self.ch_hour.setMinimumHeight(260)
@@ -208,16 +211,22 @@ class ResultsPages:
                                f"цепочка Vmp {c['ns'] * c['vmp']:.1f} В / Voc {c['ns'] * c['voc']:.1f} В · "
                                f"ток {c['np'] * c['imp']:.1f} А на вход"
                                + (f" · всего {nf} поля: {c['npan']} панелей, {c['pstc_tot'] / 1000:.2f} кВт" if nf > 1 else ""))
+        has_reg = self.sd.use_reg(float(s["lat"]), float(s["lon"]))
         for w in W_KEYS:
             d = res[(m, w)]
             val, sub = self.kpi[w]
+            if w == "reg" and not has_reg:
+                val.setText("—")
+                sub.setText("📍 Погода региона за 5 лет не загружена — выберите «📍 Регион 5 лет» или «Данные солнца»")
+                continue
             val.setText(f"{_fmt(d['wh'][8] / 1000, 2)} кВт·ч")
             sub.setText(f"{dict(WEATHER)[w]} · {MONTHS[m].lower()} · пик {_fmt(d['peak'])} Вт")
         dclear = res[(m, "clear")]
         self.kpi["peak"][0].setText(f"{_fmt(dclear['peak'])} Вт")
         self.kpi["peak"][1].setText(f"Пик (ясно, {MONTHS_S[m]}) · {'ток на шине АКБ' if c['builtin'] else 'ток заряда'} {dclear['peak_i']:.1f} А")
         self.kpi["year"][0].setText(f"{_fmt(R['year']['avg'])} кВт·ч")
-        self.kpi["year"][1].setText(f"За год · {R['year']['avg'] / max(pk / 1000, 1e-9):.0f} кВт·ч/кВт · ясно всегда {_fmt(R['year']['clear'])}")
+        self.kpi["year"][1].setText(f"За год · {R['year']['avg'] / max(pk / 1000, 1e-9):.0f} кВт·ч/кВт · ясно всегда {_fmt(R['year']['clear'])}"
+                                    + (f" · 📍 по региону {_fmt(R['year']['reg'])}" if has_reg else ""))
         dw = res[(m, wsel)]["wh"]
         wl = (dw[4] - dw[5]) / dw[4] * 100 if dw[4] > 0 else 0
         self.kpi["wire"][0].setText(f"{wl:.2f} %")
@@ -266,6 +275,8 @@ class ResultsPages:
         xs = [t for t, _ in res[(m, "clear")]["curve"]]
         series = []
         for w, name in WEATHER:
+            if w == "reg" and not has_reg:
+                continue                                  # погоды региона нет — её линия совпала бы со «средним»
             col = SERIES_COL[w] or self._p()["accent"]
             series.append((name, col, [v for _, v in res[(m, w)]["curve"]]))
         nz = [t for t, v in res[(m, "clear")]["curve"] if v > 0]
@@ -275,6 +286,8 @@ class ResultsPages:
         # по месяцам
         ms = []
         for w, name in WEATHER:
+            if w == "reg" and not has_reg:
+                continue
             col = SERIES_COL[w] or self._p()["accent"]
             ms.append((name, col, [res[(mm, w)]["wh"][8] / 1000 for mm in range(12)]))
         self.ch_month.set_data(ms, labels=MONTHS_S, ydec=2)
@@ -652,7 +665,8 @@ class ResultsPages:
               f"окно {s['vmpp_min']}–{s['vmpp_max']} В, заряд до {s['iout_max']} А" if c["builtin"] else
               f"MPPT: {MPPT_PRESETS.get(s['m_preset'], ('свой',))[0]} × {s['n_mppt_max']}, заряд {s['bat_ch']} В, ток до {s['iout_max']} А")
              + f"; солнце: {self.sd.label(float(s['lat']), float(s['lon']))}", "",
-             f"{'Месяц':<10}{'Ясно':>10}{'Средне':>10}{'Пасмурно':>10}  кВт·ч/сутки"]
+             f"{'Месяц':<10}{'Ясно':>10}{'Средне':>10}{'Пасмурно':>10}{'Регион':>10}  кВт·ч/сутки"
+             + ("" if self.sd.use_reg(float(s["lat"]), float(s["lon"])) else " (регион не загружен — = средне)")]
         for mm in range(12):
             L.append(f"{MONTHS[mm]:<10}" + "".join(f"{res[(mm, w)]['wh'][8] / 1000:>10.2f}" for w in W_KEYS))
         bal = R["bal"]
@@ -694,7 +708,8 @@ class ResultsPages:
         try:
             with open(fn, "w", newline="", encoding="utf-8-sig") as f:
                 w = csv.writer(f, delimiter=";")
-                w.writerow(["Месяц", "Ясно, Вт·ч/сут", "Средне, Вт·ч/сут", "Пасмурно, Вт·ч/сут", "Средне за месяц, кВт·ч"])
+                w.writerow(["Месяц", "Ясно, Вт·ч/сут", "Средне, Вт·ч/сут", "Пасмурно, Вт·ч/сут", "Регион 5 лет, Вт·ч/сут",
+                            "Средне за месяц, кВт·ч"])
                 for m in range(12):
                     w.writerow([MONTHS[m]] + [f"{res[(m, k)]['wh'][8]:.0f}" for k in W_KEYS] +
                                [f"{res[(m, 'avg')]['wh'][8] * DAYS[m] / 1000:.1f}".replace(".", ",")])

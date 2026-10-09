@@ -1,7 +1,8 @@
-"""solar_calc_qt.py  v1.9.0
+"""solar_calc_qt.py  v1.9.4
 Главное окно программы (PySide6): боковая панель, страницы, лог, статус.
 
 Журнал:
+v1.9.4: погода «📍 Регион 5 лет»: выбрана, а данных для точки нет — загрузка сама (один раз на точку).
 v1.9.0: тема и итог расчёта обновляют холст конструктора станции.
 v1.5.0: без изменений окна — версия поднята вместе с программой (база панелей, выбор серии, поиск).
 v1.4.0: страницы «🌤 Погода» (погода + выработка по прогнозу) и «🌌 Небо», опрос погоды, разделитель
@@ -44,6 +45,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
         self.cfg = load_config()
         self.s = self.cfg["sys"]
         self.sd = SunData(self.cfg)
+        self._reg_tried = set()                          # точки, для которых погода региона уже запрашивалась
         self.R = None
         self.gen = 0
         self.page_gen = {}
@@ -236,6 +238,8 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
             return
         dt = (time.perf_counter() - t0) * 1000
         self._show_results()
+        if (self.s.get("weather") == "reg" or self.s.get("ser_weather") == "reg") and hasattr(self, "btn_reg"):
+            self.load_region(auto=True)                  # выбрана погода региона — данных для точки нет: загрузить
         if hasattr(self, "canvas"):
             self._cons_update()                      # итог за год и «закрыто станцией» на схеме
         self._status(f"расчёт {dt:.0f} мс")
@@ -333,6 +337,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
                 if self.worker.jobs.empty() and not self.worker.pending:
                     self.pill.setText("● готов")
                     self.btn_pv.setEnabled(True)
+                    self.btn_reg.setEnabled(True)
             elif callable(item):
                 try:
                     item()

@@ -1,4 +1,4 @@
-"""solar_calc.py  v1.9.3
+"""solar_calc.py  v1.9.4
 Солнечный калькулятор — точка входа: авто-установка библиотек, запуск окна, --selftest.
 Расчёт: солнце → угол/азимут → панели → схема Ns×Np → провод и контакты → MPPT (встроенный в инвертор
 или отдельный) → ток заряда → АКБ → инвертор. Данные солнца: встроенные (≈Киев) или PVGIS.
@@ -9,8 +9,12 @@
   solar_calc_qt.py      главное окно
   modules/mod_*.py      расчёт, данные, оборудование, виджеты, страницы
   modules/panels_db.tsv.gz  полная база панелей (CEC + паспорта серий)
+  modules/mod_region.py погода региона за 5 лет (архив Open-Meteo)
 
 Журнал:
+v1.9.4: погода «📍 Регион 5 лет» — реальная погода за последние 5 полных лет для точки станции (архив Open-Meteo):
+        средний день каждого месяца, карточка и линия на графиках, год по региону; загрузка сама при выборе.
+        Схема по умолчанию: поля над инвертором, отдельные MPPT справа, сеть и дом слева, АКБ под инвертором.
 v1.9.3: на схеме нет пунктирных «＋»: добавлять (поле на вход MPPT, отдельный MPPT, сборку АКБ, копию поля) —
         только правым кликом на схеме. Линии схемы аккуратнее: напротив стоящий блок — прямой линией, дорожки
         не перекрещиваются, отдельные MPPT подходят к линии АКБ каждый своей точкой, не сквозь соседей.
@@ -47,7 +51,7 @@ v1.1.0: инвертор, провода к АКБ и инвертору, акк
 v1.0.0: первая версия — солнце (встроенное + PVGIS), схемы Ns×Np, провод, окно MPPT, потери по этапам.
 """
 APP_NAME = "Солнечный калькулятор"
-VERSION = "1.9.3"
+VERSION = "1.9.4"
 
 import sys
 import os
@@ -142,7 +146,7 @@ MODULES = ("modules.mod_base", "modules.mod_panels", "modules.mod_equipment", "m
            "modules.mod_pvgis", "modules.mod_theme", "modules.mod_widgets", "modules.mod_page_settings",
            "modules.mod_page_results", "modules.mod_page_tools", "modules.mod_astro", "modules.mod_stars",
            "modules.mod_weather", "modules.mod_forecast", "modules.mod_wx_draw", "modules.mod_sky",
-           "modules.mod_page_sky", "modules.mod_constructor", "solar_calc_qt")
+           "modules.mod_page_sky", "modules.mod_constructor", "modules.mod_region", "solar_calc_qt")
 
 
 def _excepthook(tp, val, tb):

@@ -1,7 +1,8 @@
-"""mod_config.py  v1.9.3
+"""mod_config.py  v1.9.4
 параметры станции по умолчанию, config.json: загрузка, проверка, сохранение
 
 Журнал:
+v1.9.4: cfg["region"] — погода региона за 5 лет (проверка структуры, повреждённое — сброс).
 v1.9.3: места «＋»-узлов (add_*) больше не хранятся — этих узлов нет.
 v1.9.2: mppt_mode — «есть свои MPPT» / «нет MPPT» (только для своего инвертора; у гибрида из базы — всегда свои).
 v1.9.1: cons_pos — места узлов конструктора, переставленные мышью {ключ: [x, y]} (с проверкой).
@@ -27,6 +28,7 @@ from .mod_fields import ALL_FIELDS, INT_KEYS, WIRE_RANGE
 from .mod_model import bank_series
 from .mod_equipment import BATTERY_DB, MPPT_DB
 from .mod_panels import PANEL_DB
+from .mod_region import region_ok
 
 BAT_EXTRA_MAX = 5           # других сборок АКБ (кроме основной)
 PV_EXTRA_MAX = 11           # полей на других входах MPPT инвертора (входов до 12)
@@ -70,7 +72,7 @@ DEFAULT_SYS = dict(
 
 
 DEFAULT_CONFIG = {"theme": "dark", "geometry": "", "sys": dict(DEFAULT_SYS),
-                  "builtin": [list(x) for x in BUILTIN_SUN], "pvgis": None, "use_pvgis": True,
+                  "builtin": [list(x) for x in BUILTIN_SUN], "pvgis": None, "use_pvgis": True, "region": None,
                   "last_dir": "", "weather": {"on": True, "model": "best_match", "poll": 30},
                   "sky": {"names": True, "stars": True, "anim": True}}
 
@@ -180,6 +182,9 @@ def load_config():
         log.warning("⚠ Данные PVGIS в config.json повреждены — сброшены, загрузите заново")
         cfg["pvgis"] = None
     cfg["use_pvgis"] = bool(cfg.get("use_pvgis", True))
+    if cfg.get("region") is not None and not region_ok(cfg["region"]):
+        log.warning("⚠ Погода региона в config.json повреждена — сброшена, загрузится заново")
+        cfg["region"] = None
     for key, types in (("weather", {"on": bool, "model": str, "poll": int}), ("sky", {"names": bool, "stars": bool, "anim": bool})):
         got = cfg.get(key) if isinstance(cfg.get(key), dict) else {}
         d = dict(DEFAULT_CONFIG[key])

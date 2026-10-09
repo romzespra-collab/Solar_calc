@@ -1,4 +1,4 @@
-"""mod_constructor.py  v1.9.3
+"""mod_constructor.py  v1.9.4
 Конструктор станции — холст: во главе инвертор; слева поля панелей на его входах MPPT; от инвертора вниз —
 линия к шине АКБ, к этой линии сбоку подключены отдельные MPPT-контроллеры со своими полями; внизу — сборки
 АКБ на шине; справа — дом и сеть. Линии «живые» (зигзаг с бегущими точками), цвет — проверка (✓ ⚠ ✗).
@@ -6,6 +6,8 @@
 запоминается); добавить / убрать / копия — правый клик (меню).
 
 Журнал:
+v1.9.4: раскладка по умолчанию: сверху — поля на входах MPPT над инвертором (слева направо), правее — отдельные
+        MPPT (поле, под ним контроллер), слева — сеть на уровне инвертора и дом ниже, АКБ — под инвертором.
 v1.9.3: без пунктирных «＋»-узлов: добавлять — только правым кликом на схеме (поле на вход MPPT, отдельный
         MPPT, сборка АКБ); подсказка об этом — при наведении на пустое место. Линии: вход — напротив своего
         блока (прямо, без лишних колен), порядок дорожек — как у блоков (не перекрещиваются); отдельные MPPT —
@@ -32,7 +34,6 @@ from .mod_theme import _OK, _WARN, _ERR
 
 LVL = {"ok": _OK, "warn": _WARN, "err": _ERR}
 C_INV, C_BAT, C_PV, C_CTL, C_HOUSE, C_GRID, C_BUS = "#3ecf8e", "#46a8e0", "#e8b04a", "#b48cf0", "#3ecf8e", "#8a91a3", "#36c2d9"
-GAP = 44
 
 
 def dir_word(aspect):
@@ -223,32 +224,34 @@ class StationCanvas(QWidget):
 
     # ── раскладка: сама + переставленное мышью ──
     def _layout(self, d, W):
-        """Прямоугольники узлов {ключ: QRectF}: раскладка по умолчанию, поверх — места из self.pos."""
-        M = 16
-        CW = max(150, min(200, (W - 2 * M - 3 * GAP) / 4))
+        """Прямоугольники узлов {ключ: QRectF}. По умолчанию: сверху — поля на входах MPPT (над инвертором, по
+        порядку слева направо), правее — отдельные MPPT (поле сверху, контроллер под ним); инвертор под своими
+        полями; слева — сеть (на уровне инвертора) и дом (ниже); АКБ — под инвертором. Поверх — места из self.pos."""
+        M, G = 16, 40
         CH_F, CH_I, CH_C, CH_B, CH_H = 118, 150, 96, 106, 100
-        x0 = M
-        x1 = x0 + CW + GAP
-        x2 = x1 + CW + GAP
-        x3 = max(x2 + CW + GAP, W - M - CW)
+        A, B = d["a"], d["b"]
+        nA = max(1, len(A))
+        ncols = 1 + nA + len(B)
+        CW = max(130.0, min(200.0, (W - 2 * M - (ncols - 1) * G) / ncols))
+        col = CW + G
         y0 = 14
         R = {}
-        A, B = d["a"], d["b"]
-        nA = len(A)
-        stack_h = max(1, nA) * (CH_F + 14) - 14
-        R["inv"] = QRectF(x2, y0 + max(0, (stack_h - CH_I) / 2), CW, CH_I)
-        R["house"] = QRectF(x3, y0, CW, CH_H)
-        R["grid"] = QRectF(x3, y0 + CH_H + 16, CW, CH_H)
+        xa = M + col                                           # первый столбец — сеть и дом
         for i, f in enumerate(A):
-            R["field:" + f["key"]] = QRectF(x0, y0 + i * (CH_F + 14), CW, CH_F)
-
-        top_bottom = max(y0 + stack_h, R["inv"].bottom(), R["grid"].bottom())
-        yb0 = top_bottom + 30
+            R["field:" + f["key"]] = QRectF(xa + i * col, y0, CW, CH_F)
+        a_mid = xa + (nA * col - G) / 2
+        R["inv"] = QRectF(a_mid - CW / 2, y0 + CH_F + 92, CW, CH_I)
+        xb = xa + nA * col                                     # отдельные MPPT — правее полей инвертора
+        per = max(1, int((W - M - xb + G + 1) // col))
         for j, b in enumerate(B):
-            rf = QRectF(x0, yb0 + j * (CH_F + 14), CW, CH_F)
-            R["field:" + b["key"]] = rf
-            R["ctl:" + b["key"]] = QRectF(x1, rf.center().y() - CH_C / 2, CW, CH_C)
-        y_bus = yb0 + len(B) * (CH_F + 14) + 24
+            rr, cc = divmod(j, per)
+            x = min(xb + cc * col, max(M, W - M - CW))
+            yf = y0 + rr * (CH_F + 40 + CH_C + 40)
+            R["field:" + b["key"]] = QRectF(x, yf, CW, CH_F)
+            R["ctl:" + b["key"]] = QRectF(x, yf + CH_F + 40, CW, CH_C)
+        inv = R["inv"]
+        R["grid"] = QRectF(M, inv.center().y() - CH_H / 2, CW, CH_H)
+        R["house"] = QRectF(M, max(R["grid"].bottom() + 40, inv.bottom() + 60), CW, CH_H)
 
         def place(keys):                                       # переставленные мышью — на своё место
             for k in keys:
@@ -257,14 +260,26 @@ class StationCanvas(QWidget):
                     r = R[k]
                     r.moveTo(min(max(0.0, float(x)), max(0.0, W - r.width())), max(0.0, float(y)))
         place(list(R))
-        # сборки АКБ — нижним рядом под всеми узлами (и под переставленными тоже)
-        y_bus = max(y_bus, max(r.bottom() for r in R.values()) + 24)
+        # сборки АКБ — рядом под инвертором (первая — прямо под ним); мешают узлы — ряд ниже них
+        inv = R["inv"]
         nb = len(d["bats"])
-        per_row = max(1, int((W - 2 * M + 14) // (CW + 14)))
-        for j in range(nb):
-            rr, cc = divmod(j, per_row)
-            x, y = M + cc * (CW + 14), y_bus + 26 + rr * (CH_B + 30)
-            R[f"bat:{j}"] = QRectF(x, y, CW, CH_B)
+        step = CW + 14
+        bx = inv.center().x() - CW / 2
+        if bx + nb * step - 14 > W - M:                        # не влезают вправо — сдвинуть ряд влево
+            bx = max(M, W - M - nb * step + 14)
+        per_b = max(1, int((W - M - bx + 14) // step))
+        y_row = inv.bottom() + 70
+
+        def row(y):
+            return [QRectF(bx + (j % per_b) * step, y + (j // per_b) * (CH_B + 30), CW, CH_B) for j in range(nb)]
+        others = [r for r in R.values()]
+        for _ in range(6):
+            hit = [o.bottom() for o in others for r in row(y_row) if r.adjusted(-10, -36, 10, 10).intersects(o)]
+            if not hit:
+                break
+            y_row = max(hit) + 50
+        for j, r in enumerate(row(y_row)):
+            R[f"bat:{j}"] = r
         place([f"bat:{j}" for j in range(nb)])
         return R
 
@@ -481,7 +496,11 @@ class StationCanvas(QWidget):
             top = key not in ("house", "grid") and r.bottom() < inv.top() - 6        # поле выше — сверху
             side = self._end_side(self._route(r, inv, 0, others(r, inv), ax0, top))
             c, ic = r.center(), inv.center()
-            ent.append((key, side, (c.x() - ic.x()) if side in ("t", "b") else (c.y() - ic.y())))
+            spread = 0.0
+            if key not in ("house", "grid"):                       # поле на k входов — его линии врозь
+                fk = next(f["k"] for f in A if f["key"] == key[0])
+                spread = (key[1] - (fk - 1) / 2) * 44
+            ent.append((key, side, ((c.x() - ic.x()) if side in ("t", "b") else (c.y() - ic.y())) + spread))
             axes[key] = ("v" if side in ("t", "b") else "h", top and side == "t", side)
         hw, hh = inv.width() / 2 - 14, inv.height() / 2 - 14
         lane = self._lanes(ent, {"t": hw, "b": hw, "l": hh, "r": hh}, skip0=("b",), step=22.0)

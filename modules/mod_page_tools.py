@@ -1,7 +1,9 @@
-"""mod_page_tools.py  v1.3.0
+"""mod_page_tools.py  v1.9.4
 страницы «Схемы S×P», «Угол», «Провод», «Данные PVGIS», «Цвета»
 
 Журнал:
+v1.9.4: «Данные солнца» — погода региона за 5 лет (архив Open-Meteo): загрузить / забыть, сумма солнца по
+        годам, колонки в таблице; загрузка сама при выборе погоды «📍 Регион 5 лет».
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; сравнение схем — с разбивкой по входам MPPT / контроллерам.
 """
 
@@ -15,6 +17,7 @@ from .mod_config import save_config
 from .mod_model import layouts, wire_r, compute_days, year_kwh, ampacity, balance
 from .mod_checks import make_checks
 from .mod_pvgis import fetch_pvgis
+from .mod_region import fetch_region, region_years
 from .mod_theme import _OK, _ERR, _WARN, SERIES_COL
 from .mod_widgets import (app_name, app_version, Toggle, Segmented, _lab, _card, _btn, _fmt, Chart,
                           make_table, _item)
@@ -333,6 +336,22 @@ class ToolPages:
         self.pv_info = _lab("", "hint", True)
         cv.addWidget(self.pv_info)
         v.addWidget(fr)
+        y0, y1 = region_years()
+        fr, cv = _card(f"📍 Погода региона — реальная, за {y0}–{y1} (архив Open-Meteo)")
+        cv.addWidget(_lab("Скачает погоду по часам за последние 5 полных лет для широты/долготы станции и посчитает средний "
+                          "день каждого месяца — солнце, облака, температура как было на самом деле. Это погода «📍 Регион 5 лет» "
+                          "в Прогнозе и на других страницах. Нужен интернет один раз, дальше — из config.json.", "hint", True))
+        row = QHBoxLayout()
+        self.btn_reg = _btn("📍 Загрузить погоду региона", "primary", "Скачать погоду за 5 лет для текущей точки",
+                            lambda: self.load_region())
+        row.addWidget(self.btn_reg)
+        row.addStretch(1)
+        row.addWidget(_btn("🗑 Забыть", "danger", "Удалить погоду региона", self.forget_region))
+        cv.addLayout(row)
+        self.reg_info = _lab("", "hint", True)
+        self.reg_info.setTextFormat(Qt.RichText)
+        cv.addWidget(self.reg_info)
+        v.addWidget(fr)
         fr, cv = _card("Помесячно: горизонтальная облучённость и температура")
         top = QHBoxLayout()
         top.addWidget(_lab("Встроенные значения можно править двойным щелчком.", "hint"))
@@ -340,7 +359,7 @@ class ToolPages:
         top.addWidget(_btn("♻ Встроенные по умолчанию", "chip", "Вернуть значения ≈Киев", self.reset_builtin))
         cv.addLayout(top)
         self.tb_data = make_table(["Месяц", "Встроенные, кВт·ч/м²·день", "Встроенные, °C", "PVGIS, кВт·ч/м²·день",
-                                   "PVGIS, °C", "Сдвиг времени PVGIS, ч"])
+                                   "PVGIS, °C", "Сдвиг времени PVGIS, ч", "Регион 5 лет, кВт·ч/м²·день", "Регион 5 лет, °C"])
         self.tb_data.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
         self.tb_data.itemChanged.connect(self._data_edited)
         cv.addWidget(self.tb_data)
@@ -352,6 +371,7 @@ class ToolPages:
         t.blockSignals(True)
         t.setRowCount(0)
         pv = self.cfg.get("pvgis")
+        rg = self.cfg.get("region")
         for m in range(12):
             t.insertRow(m)
             it = _item(MONTHS[m])
@@ -362,7 +382,9 @@ class ToolPages:
             t.setItem(m, 2, _item(f"{b[1]:.1f}", True))
             for col, val in ((3, f"{pv['months'][m]['H']:.2f}" if pv else "—"),
                              (4, f"{pv['months'][m]['T']:.1f}" if pv else "—"),
-                             (5, f"{pv['months'][m].get('shift', 0):+.2f}" if pv else "—")):
+                             (5, f"{pv['months'][m].get('shift', 0):+.2f}" if pv else "—"),
+                             (6, f"{rg['months'][m]['H']:.2f}" if rg else "—"),
+                             (7, f"{rg['months'][m]['T']:.1f}" if rg else "—")):
                 it = _item(val, True)
                 it.setFlags(it.flags() & ~Qt.ItemIsEditable)
                 t.setItem(m, col, it)
@@ -375,6 +397,17 @@ class ToolPages:
                                  + ("используется ✓" if near else "⚠ не используется: точка в параметрах другая или выключено"))
         else:
             self.pv_info.setText("PVGIS не загружен — считаются встроенные данные (≈Киев).")
+        if rg:
+            near = self.sd.use_reg(float(s["lat"]), float(s["lon"]))
+            yh = sum(rg["months"][m]["H"] * DAYS[m] for m in range(12))
+            by = " · ".join(f"{y}: {v:.0f}" for y, v in (rg.get("year_h") or {}).items())
+            self.reg_info.setText(f"Загружено {rg.get('stamp', '')} для ({rg['lat']}, {rg['lon']}) за {rg.get('years', '')} "
+                                  f"({rg.get('days', 0)} дней) · в среднем {yh:.0f} кВт·ч/м² в год"
+                                  + (f"<br>По годам, кВт·ч/м²: {by}" if by else "") + "<br>"
+                                  + ("используется для «📍 Регион 5 лет» ✓" if near else
+                                     "<span style='color:#f5b545'>⚠ точка в параметрах другая — загрузите заново</span>"))
+        else:
+            self.reg_info.setText("Не загружено — «📍 Регион 5 лет» пока считается как «⛅ Средний».")
 
     def _data_edited(self, it):
         r, c = it.row(), it.column()
@@ -413,6 +446,40 @@ class ToolPages:
         self.cfg["pvgis"] = None
         save_config(self.cfg)
         log.info("🗑 Данные PVGIS удалены")
+        self.recalc()
+        self._fill_data_table()
+
+    def load_region(self, auto=False):
+        """Погода региона за 5 лет для точки станции — в фоне; auto — сама при выборе «📍 Регион 5 лет»
+        (для одной точки — один раз за запуск, чтобы без сети не повторять)."""
+        lat, lon = float(self.s["lat"]), float(self.s["lon"])
+        if auto:
+            if self.sd.use_reg(lat, lon) or (round(lat, 2), round(lon, 2)) in self._reg_tried:
+                return
+            self._reg_tried.add((round(lat, 2), round(lon, 2)))
+        self.btn_reg.setEnabled(False)
+
+        def done(rg):
+            self.cfg["region"] = rg
+            save_config(self.cfg)
+            yh = sum(rg["months"][m]["H"] * DAYS[m] for m in range(12))
+            by = ", ".join(f"{y} — {v:.0f}" for y, v in (rg.get("year_h") or {}).items())
+            log.info(f"✓ Погода региона за {rg['years']} загружена ({rg['lat']}, {rg['lon']}): в среднем {yh:.0f} кВт·ч/м² "
+                     f"в год" + (f" (по годам: {by})" if by else ""))
+            self.recalc()
+            self._fill_data_table()
+
+        if not self.worker.submit("погода региона за 5 лет", lambda: fetch_region(lat, lon), done):
+            self.btn_reg.setEnabled(True)
+
+    def forget_region(self):
+        if not self.cfg.get("region"):
+            return
+        if QMessageBox.question(self, app_name(), "Удалить погоду региона за 5 лет?") != QMessageBox.Yes:
+            return
+        self.cfg["region"] = None
+        save_config(self.cfg)
+        log.info("🗑 Погода региона удалена")
         self.recalc()
         self._fill_data_table()
 

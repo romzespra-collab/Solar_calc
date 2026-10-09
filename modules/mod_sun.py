@@ -1,8 +1,10 @@
-"""mod_sun.py  v1.4.0
+"""mod_sun.py  v1.9.4
 Положение Солнца (одна формула на всю программу: расчёт, небо, восход/закат), часовой пояс станции
 с летним временем ЕС, облучённость плоскости панелей, данные солнца (встроенные / PVGIS).
 
 Журнал:
+v1.9.4: погода «reg» — средний день месяца по реальной погоде региона за 5 лет (SunData.reg, архив
+        Open-Meteo); нет данных для этой точки — как «средний».
 v1.4.0: формула Солнца — NOAA с дробным днём (как в Smart_BMS), разница с v1.3 < 0.1%; правило
         летнего времени ЕС (zone_offset); облучённость панели вынесена в poa() — её же использует
         прогноз выработки по погоде.
@@ -119,6 +121,12 @@ class SunData:
         self.builtin = [list(map(float, r)) for r in cfg.get("builtin") or BUILTIN_SUN]
         self.pv = cfg.get("pvgis")
         self.enabled = bool(cfg.get("use_pvgis", True))
+        self.reg = cfg.get("region")                   # погода региона за 5 лет (mod_region)
+
+    def use_reg(self, lat, lon):
+        rg = self.reg
+        return bool(rg and abs(rg.get("lat", 999) - lat) < 0.06 and abs(rg.get("lon", 999) - lon) < 0.06
+                    and len(rg.get("months", [])) == 12)
 
     def use_pv(self, lat, lon):
         pv = self.pv
@@ -126,9 +134,10 @@ class SunData:
                     and abs(pv.get("lon", 999) - lon) < 0.06 and len(pv.get("months", [])) == 12)
 
     def tag(self, lat, lon):
+        rg = ("rg", self.reg.get("stamp", "")) if self.use_reg(lat, lon) else ("rg-",)
         if self.use_pv(lat, lon):
-            return ("pv", self.pv["lat"], self.pv["lon"], self.pv.get("stamp", ""))
-        return ("bi", tuple(tuple(r) for r in self.builtin))
+            return ("pv", self.pv["lat"], self.pv["lon"], self.pv.get("stamp", "")) + rg
+        return ("bi", tuple(tuple(r) for r in self.builtin)) + rg
 
     def label(self, lat, lon):
         if self.use_pv(lat, lon):
@@ -151,6 +160,8 @@ def irr_day(s, sd, m, w):
         hit = _IRR_CACHE.get(key)
     if hit is not None:
         return hit
+    if w == "reg" and not sd.use_reg(lat, lon):
+        return irr_day(s, sd, m, "avg")                # погоды региона нет — как «средний»
     tz = zone_offset(s["tz"], s["dst"], datetime.datetime(2025, m + 1, 15, 12))   # середина месяца
     ko = float(s["overcast_k"]) / 100.0
     geom = panel_geom(s, 0.35 if m in (0, 1, 11) else 0.2)
@@ -160,6 +171,8 @@ def irr_day(s, sd, m, w):
     dhi = [None] * N_STEPS
     ta = [0.0] * N_STEPS
     pv = sd.pv["months"][m] if sd.use_pv(lat, lon) else None
+    if w == "reg":
+        pv = sd.reg["months"][m]                       # реальная погода региона — как «средний» по своему профилю
     if pv is None:
         H, Tm = sd.builtin[m]
         cs = [haurwitz(g[0]) for g in geo]
@@ -182,7 +195,7 @@ def irr_day(s, sd, m, w):
             ta[i] = interp24(pv["t"], x)
             if g[0] <= 0:
                 continue
-            if w == "avg":
+            if w in ("avg", "reg"):
                 G = interp24(pv["ghi"], x)
                 ghi[i] = G
                 dhi[i] = min(G, interp24(pv["dhi"], x))

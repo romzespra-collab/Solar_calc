@@ -1,10 +1,11 @@
-"""mod_forecast.py  v1.9.0
+"""mod_forecast.py  v1.9.4
 Прогноз выработки по погоде: радиация Open-Meteo по часам → та же цепочка, что и весь расчёт
 (положение Солнца mod_sun → плоскость панелей → панели/провод/MPPT → АКБ → дом). По дням:
 кВт·ч в АКБ, на какой «типовой день» месяца похоже (ясно/средне/пасмурно), заряд АКБ по 10 минутам,
 переход на сеть.
 
 Журнал:
+v1.9.4: «на какой день похоже» — только ясно / средне / пасмурно (погода региона — не типовой день).
 v1.9.0: разные поля панелей — облучённость считается для каждого поля (свой угол и азимут).
 v1.4.0: первая версия.
 """
@@ -109,7 +110,7 @@ def run(s, fc, res=None, soc0=70.0, days=None):
         og = og_new
         like = None
         if res is not None and full:
-            like = min(W_KEYS, key=lambda w: abs(res[(m, w)]["wh"][8] - acc[8]))
+            like = min((w for w in W_KEYS if w != "reg"), key=lambda w: abs(res[(m, w)]["wh"][8] - acc[8]))
         out.append(dict(date=day, full=full, wh=acc, out=acc[8], ghi=g_wh, poa=p_wh, curve=pts, like=like,
                         peak=max((p for _, p in pts), default=0.0), soc=rr, load=load))
     return dict(days=out, start=first)

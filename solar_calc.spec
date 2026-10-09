@@ -1,4 +1,5 @@
-# solar_calc.spec  v1.9.3 — PyInstaller, onefile, без консоли
+# solar_calc.spec  v1.9.4 — PyInstaller, onefile, без консоли
+# v1.9.4: + modules/mod_region.py (погода региона за 5 лет)
 # v1.9.3: без изменений сборки, версия поднята вместе с программой
 # v1.9.2: без изменений сборки, версия поднята вместе с программой
 # v1.9.1: без изменений сборки, версия поднята вместе с программой
@@ -22,7 +23,7 @@ a = Analysis(
                    'modules.mod_checks', 'modules.mod_pvgis', 'modules.mod_theme', 'modules.mod_widgets',
                    'modules.mod_page_settings', 'modules.mod_page_results', 'modules.mod_page_tools',
                    'modules.mod_astro', 'modules.mod_stars', 'modules.mod_weather', 'modules.mod_forecast',
-                   'modules.mod_wx_draw', 'modules.mod_sky', 'modules.mod_page_sky', 'modules.mod_constructor'],
+                   'modules.mod_wx_draw', 'modules.mod_sky', 'modules.mod_page_sky', 'modules.mod_constructor', 'modules.mod_region'],
     hookspath=[],
     runtime_hooks=[],
     excludes=['PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngine',
