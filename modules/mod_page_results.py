@@ -1,7 +1,8 @@
-"""mod_page_results.py  v1.7.0
+"""mod_page_results.py  v1.8.0
 страницы «Прогноз», «Покрытие дома», «Горсеть», отчёт
 
 Журнал:
+v1.8.0: «Поле: … · 2 входа MPPT × по 9 панелей (9 посл. × 1 пар.)» — сколько панелей на каждый вход.
 v1.7.0: банк из разных сборок: состав «16S1P LF280K + 16S2P LF105», вес по всем сборкам, в отчёте — состав.
 v1.5.1: АКБ сборками: «4 сборки × 16 последовательно = 64 шт»; совет «докупить» — в сборках.
 v1.3.0: вынесено из solar_calc.pyw v1.2.1; поле на k входов MPPT, встроенный MPPT гибрида (нет провода
@@ -20,7 +21,7 @@ from .mod_base import MONTHS, MONTHS_S, DAYS, WEATHER, W_KEYS, WEATHER_ADJ, MONT
 from .mod_equipment import CELL_INFO, INVERTER_PRESETS, MPPT_PRESETS
 from .mod_sun import DT
 from .mod_fields import WIRE_S_KEYS, s2d
-from .mod_model import wire_r, sim_point, load_day_wh, soc_series, grid_times, fmt_t, LOSS_ROWS, bank_desc
+from .mod_model import wire_r, sim_point, load_day_wh, soc_series, grid_times, fmt_t, LOSS_ROWS, bank_desc, layout_text
 from .mod_theme import _OK, _ERR, _WARN, SERIES_COL
 from .mod_widgets import (app_name, app_version, Segmented, Stepper, _lab, _card, _btn, _save_failed, _fmt,
                           Chart, make_table, _item)
@@ -200,7 +201,7 @@ class ResultsPages:
         wsel = s["weather"]
         self.src_lab.setText("Солнце: " + self.sd.label(float(s["lat"]), float(s["lon"])))
         pk = c["pstc_tot"]
-        lay = f"{c['ns']}S×{c['np']}P" + (f" на каждый из {c['k']} входов" if c["k"] > 1 else "")
+        lay = layout_text(c["k"], c["ns"], c["np"], not c["builtin"])
         self.lab_total.setText(f"Поле: {c['npan']} панелей × {c['pmax']:.0f} Вт = {pk / 1000:.2f} кВт · {lay} · "
                                f"цепочка Vmp {c['ns'] * c['vmp']:.1f} В / Voc {c['ns'] * c['voc']:.1f} В · "
                                f"ток {c['np'] * c['imp']:.1f} А на вход")

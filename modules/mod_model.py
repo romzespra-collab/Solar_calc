@@ -1,7 +1,8 @@
-"""mod_model.py  v1.7.0
+"""mod_model.py  v1.8.0
 физика станции: панели → провод → MPPT → АКБ → инвертор; заряд АКБ по 10 минутам
 
 Журнал:
+v1.8.0: подписи раскладки с входами MPPT (layout_text, inputs_word, plural) — сколько панелей на каждый вход.
 v1.7.0: разные сборки АКБ параллельно (bank_groups): основная + до 5 других из базы (s["bat_extra"]);
         ёмкость, полезная энергия и ток заряда складываются, у каждой сборки — своя последовательность.
 v1.5.1: АКБ задаются сборками (bat_packs, 1–10): в сборке последовательно — по напряжению системы
@@ -26,6 +27,26 @@ def bank_series(s):
     lfp = s["chem"] == "lfp"
     sys_nom = int(s["bat_v"]) * (12.8 / 12.0 if lfp else 1.0)
     return sys_nom, max(1, int(round(sys_nom / max(0.5, float(s["bat_unit_v"])))))
+
+
+def plural(n, one, few, many):
+    """1 вход, 2 входа, 5 входов."""
+    n = abs(int(n))
+    return one if n % 10 == 1 and n % 100 != 11 else few if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else many
+
+
+def inputs_word(k, sep=False):
+    """«2 входа MPPT» / «2 контроллера»."""
+    return f"{k} {plural(k, 'контроллер', 'контроллера', 'контроллеров')}" if sep else \
+        f"{k} {plural(k, 'вход', 'входа', 'входов')} MPPT"
+
+
+def layout_text(k, ns, np_, sep=False):
+    """Раскладка словами: «1 вход MPPT: 18 панелей (9 посл. × 2 пар.)» /
+    «2 входа MPPT × по 9 панелей (9 посл. × 1 пар.)» — сколько панелей на каждый вход."""
+    m = ns * np_
+    pan = f"{m} {plural(m, 'панель', 'панели', 'панелей')} ({ns} посл. × {np_} пар.)"
+    return f"{inputs_word(k, sep)}: {pan}" if k == 1 else f"{inputs_word(k, sep)} × по {pan}"
 
 
 def bank_groups(s):

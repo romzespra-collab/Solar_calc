@@ -1,7 +1,9 @@
-"""mod_page_settings.py  v1.7.0
+"""mod_page_settings.py  v1.8.0
 Страница «Настройки станции»: карточка «Моя станция» (что стоит), поля, пресеты, реакция на изменения.
 
 Журнал:
+v1.8.0: входы MPPT видны везде: схема «2 входа MPPT × по 9 панелей (9 посл. × 1 пар.)», сколько входов занято
+        и свободно; у инвертора — «2 входа MPPT»; строка встроенного MPPT — окно, Voc, ток на вход, занято.
 v1.7.0: «Моя станция» — поля своей ширины (не на всё окно); АКБ: «＋ Другая сборка» — разные АКБ параллельно
         (до 5 других: тип × сборок, ✕ — убрать, меню по правому клику).
 v1.6.0: инвертор — производитель → напряжение АКБ (12 / 24 / 48 В, с MPPT / без) → модель.
@@ -22,7 +24,8 @@ from .mod_panels import PANEL_DB, PANEL_SERIES
 from .mod_equipment import INVERTER_DB, INVERTER_SERIES, MPPT_DB, BATTERY_DB, MPPT_PRESETS, inv_is_hybrid
 from .mod_fields import (INPUT_CARDS, INT_KEYS, INV_KEYS, WIRE_S_KEYS, WIRE_RANGE, PRESET_GROUPS, MPPT_MODES,
                          s2d, d2s)
-from .mod_model import make_ctx, layouts, layout_status, best_layout, bank_series, bank_groups
+from .mod_model import (make_ctx, layouts, layout_status, best_layout, bank_series, bank_groups, layout_text,
+                        inputs_word, plural)
 from .mod_config import BAT_EXTRA_MAX
 from .mod_theme import _OK, _ERR, _WARN
 from .mod_widgets import Toggle, Segmented, NoWheelCombo, Stepper, PresetPicker, _lab, _card, _btn
@@ -519,8 +522,7 @@ class SettingsPage:
         for o in layouts(int(s["n_pan"]), int(s["n_mppt_max"])):
             k, ns, np_ = o
             lvl, msg = layout_status(s, *o)
-            where = "" if k == 1 else f"  — на каждый из {k} {'контроллеров' if sep else 'входов MPPT'}"
-            cb.addItem(f"{LVL_ICON[lvl]}  {ns} посл. × {np_} пар.{where}" + ("   ★ лучшая" if o == best else ""), o)
+            cb.addItem(f"{LVL_ICON[lvl]}  {layout_text(k, ns, np_, sep)}" + ("   ★ лучшая" if o == best else ""), o)
             j = cb.count() - 1
             cb.setItemData(j, msg or "Замечаний нет", Qt.ToolTipRole)
             if lvl != "ok":
@@ -528,7 +530,7 @@ class SettingsPage:
             if o == cur:
                 sel = j
         if sel < 0:                             # текущей нет в списке (не делится) — показать как есть
-            cb.addItem(f"✗  {cur[1]} посл. × {cur[2]} пар. × {cur[0]} — не совпадает с количеством", cur)
+            cb.addItem(f"✗  {layout_text(cur[0], cur[1], cur[2], sep)} — не совпадает с количеством панелей", cur)
             sel = cb.count() - 1
         cb.setCurrentIndex(sel)
         cb.blockSignals(False)
@@ -537,8 +539,13 @@ class SettingsPage:
         k, ns, np_ = cur
         voc_cold = ns * c["voc"] * (1 + c["bvoc"] * (float(s["t_min"]) - 25))
         lim = f" (предел {c['iin_max']:.0f} А)" if c["iin_max"] > 0 else ""
-        txt = (f"Цепочка из {ns}: Vmp {ns * c['vmp']:.0f} В, Voc {ns * c['voc']:.0f} В, на морозе {voc_cold:.0f} В "
-               f"(MPPT до {c['v_max']:.0f} В) · ток {np_ * c['imp']:.1f} А на вход{lim}")
+        kmax = int(s["n_mppt_max"])
+        where = (f"На {'каждый ' if k > 1 else ''}{'контроллер' if sep else 'вход MPPT'}: {ns * np_} "
+                 f"{plural(ns * np_, 'панель', 'панели', 'панелей')} — ")
+        free = (f" · занято {k} из {kmax}, свободно {kmax - k}" if kmax > k else
+                (f" · заняты все {kmax}" if kmax > 1 else ""))
+        txt = (where + f"цепочка из {ns}: Vmp {ns * c['vmp']:.0f} В, Voc {ns * c['voc']:.0f} В, на морозе {voc_cold:.0f} В "
+               f"(MPPT до {c['v_max']:.0f} В) · ток {np_ * c['imp']:.1f} А на вход{lim}{free}")
         if msg:
             txt += f"<br><span style='color:{LVL_COL[lvl]}'>{LVL_ICON[lvl]} {msg}</span>"
         self.lab_layout.setText(txt)
@@ -586,7 +593,9 @@ class SettingsPage:
             bv = f"АКБ {pr['inv_bat_v']} В" if pr["inv_bat_v"] else "АКБ любые"
             t = f"{pr['inv_p'] / 1000:g} кВт · {bv} · холостой ход ≈{pr['inv_idle']:g} Вт"
             if mp:
-                t += (f" · MPPT: {mp['n_mppt_max']} вх., {mp['vmpp_min']:g}–{mp['vmpp_max']:g} В (Voc ≤ {mp['v_max']:g} В)"
+                nt = mp["n_mppt_max"]
+                t += (f" · {inputs_word(nt)} ({nt} {plural(nt, 'трекер', 'трекера', 'трекеров')}), "
+                      f"{mp['vmpp_min']:g}–{mp['vmpp_max']:g} В (Voc ≤ {mp['v_max']:g} В)"
                       + (f", до {mp['iin_max']:g} А на вход" if mp["iin_max"] else "")     # не указан — сказано в описании
                       + (f", PV до {mp['pv_pmax'] / 1000:g} кВт" if mp["pv_pmax"] else "")
                       + f", заряд до {mp['iout_max']:g} А")
@@ -600,8 +609,12 @@ class SettingsPage:
         self.lab_inv.setText(t)
         # MPPT
         if builtin:
-            t = ("Свой инвертор: параметры встроенного MPPT — в карточке «MPPT инвертора»" if custom_inv
-                 else "Встроенный MPPT — параметры из паспорта инвертора")
+            n = int(s["n_mppt_max"])
+            io, ii = float(s["iout_max"]), float(s["iin_max"])
+            t = (("Свой инвертор — параметры MPPT в карточке «MPPT инвертора». " if custom_inv else "Встроенный MPPT: ")
+                 + f"{inputs_word(n)}, окно {float(s['vmpp_min']):g}–{float(s['vmpp_max']):g} В, Voc ≤ {float(s['v_max']):g} В"
+                 + (f", до {ii:g} А на каждый вход" if ii > 0 else "") + f", заряд до {io:g} А"
+                 + f" · занято {int(s['n_in'])} из {n}")
         else:
             n = int(s["n_mppt_max"])
             io = float(s["iout_max"])
