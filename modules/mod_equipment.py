@@ -1,8 +1,11 @@
-"""mod_equipment.py  v1.6.0
+"""mod_equipment.py  v1.8.0
 Оборудование: инверторы (гибриды со встроенным MPPT и без), MPPT-контроллеры, АКБ;
 профили нагрузки; провода и контакты (ПУЭ).
 
 Журнал:
+v1.8.0: +27 инверторов 8–16 кВт (48 В): 11 кВт с 2 MPPT — Voltronic Axpert MAX II/III/Ultra/Duplex, Axioma ISMPPT BFP 11000,
+        EASun SMG II / SMW 11K, Must PV19-11048 EXP, PH18 PRO 8/10K; PowMr HVM8.2M/10.2M, SRNE ASF, Felicity IVEM-II,
+        Anern EVO-10200, Luxpower SNA 12K, Deye SUN-14K/16K-SG01LP1, Victron Quattro 10/15 кВА; типовой «Гибрид 11 кВт, 2 MPPT».
 v1.6.0: +126 инверторов на 12 и 24 В: гибриды (Must PV18, Axioma ISMPPT BF, Voltronic Axpert VM, EASun, PowMr,
         SRNE, Growatt SPF, Felicity, Anern, Victron EasySolar, LogicPower, Volt Polska) и без MPPT (Victron
         Phoenix / MultiPlus, Mean Well, LogicPower, Volt Polska, Must EP, Luxeon, Axioma). Группа выбора —
@@ -396,6 +399,61 @@ INVERTER_DB = make_db([
      "х.х. 35 Вт (оценка) · ток на вход MPPT не указан"),
     ("voltronic_axpertvmiv360024", "Voltronic", "Axpert VM IV 3600-24", _inv(3600, 91, 35, 24, _mppt(500, 120, 450, 0, 120, eta=97, eta_k=0, headroom=0, pv_pmax=4000, n_mppt_max=1)),
      "х.х. 35 Вт (оценка) · ток на вход MPPT не указан"),
+    # v1.8.0: 8–16 кВт, 48 В — в основном 11 кВт с 2 MPPT (паспорта из поиска)
+    ("anern_anscievo10200", "Anern", "AN-SCI-EVO-10200", _inv(10200, 92, 80, 48, _mppt(500, 90, 450, 18, 160, eta=97, eta_k=0, headroom=0, pv_pmax=10800, n_mppt_max=2)),
+     "х.х. 80 Вт (оценка)"),
+    ("axioma_ismpptbfp11000", "Axioma", "ISMPPT BFP 11000", _inv(11000, 91, 75, 48, _mppt(500, 90, 450, 18, 150, eta=97, eta_k=0, headroom=0, pv_pmax=11000, n_mppt_max=2)),
+     "х.х. не более 75 Вт (паспорт)"),
+    ("axioma_ismpptbfpg8000", "Axioma", "ISMPPT BFP G 8000", _inv(8000, 91, 70, 48, _mppt(500, 90, 450, 18, 150, eta=97, eta_k=0, headroom=0, pv_pmax=8000, n_mppt_max=2)),
+     "х.х. не более 70 Вт (паспорт)"),
+    ("deye_sun14ksg01lp1eu", "Deye", "SUN-14K-SG01LP1-EU", _inv(14000, 93, 80, 48, _mppt(500, 150, 425, 32, 250, eta=97, eta_k=0, headroom=0, pv_pmax=22400, n_mppt_max=3)),
+     "КПД ≈ как у других Deye (в паспорте только PV→AC 97.6%) · х.х. 80 Вт (оценка)"),
+    ("deye_sun16ksg01lp1eu", "Deye", "SUN-16K-SG01LP1-EU", _inv(16000, 93, 80, 48, _mppt(500, 150, 425, 32, 290, eta=97, eta_k=0, headroom=0, pv_pmax=25600, n_mppt_max=3)),
+     "КПД ≈ как у других Deye (в паспорте только PV→AC 97.6%) · х.х. 80 Вт (оценка)"),
+    ("easun_isolarsmgii11kw48vsmgii11kp48vwifi", "EASun", "ISolar SMG II 11KW 48V (SMG-II-11KP-48V-WiFi)", _inv(11000, 92, 70, 48, _mppt(500, 60, 500, 18, 160, eta=97, eta_k=0, headroom=0, pv_pmax=11000, n_mppt_max=2)),
+     "х.х. не более 70 Вт (паспорт)"),
+    ("easun_isolarsmw11kw48v", "EASun", "ISolar SMW 11KW 48V", _inv(11000, 91, 70, 48, _mppt(500, 90, 450, 27, 150, eta=97, eta_k=0, headroom=0, pv_pmax=11000, n_mppt_max=2)),
+     "х.х. не более 70 Вт (паспорт)"),
+    ("felicity_ivem12048ii", "Felicity", "IVEM12048-II", _inv(12000, 92.5, 80, 48, _mppt(500, 100, 450, 0, 240, eta=97, eta_k=0, headroom=0, pv_pmax=15000, n_mppt_max=2)),
+     "х.х. 80 Вт (оценка) · ток на вход MPPT не указан"),
+    ("felicity_ivem8048ii", "Felicity", "IVEM8048-II", _inv(8000, 92.5, 80, 48, _mppt(500, 100, 450, 0, 150, eta=97, eta_k=0, headroom=0, pv_pmax=10000, n_mppt_max=2)),
+     "х.х. 80 Вт (оценка) · ток на вход MPPT не указан"),
+    ("luxpower_sna12ksnaeu12k230v", "Luxpower", "SNA 12K (SNA-EU 12K, 230V)", _inv(12000, 91, 80, 48, _mppt(480, 120, 385, 35, 250, eta=97, eta_k=0, headroom=0, pv_pmax=24000, n_mppt_max=2)),
+     "х.х. 80 Вт (оценка)"),
+    ("must_ph1810048pro", "Must", "PH18-10048 PRO", _inv(10000, 88, 80, 48, _mppt(450, 150, 430, 0, 200, eta=97, eta_k=0, headroom=0, pv_pmax=0, n_mppt_max=2)),
+     "х.х. 80 Вт (оценка) · ток на вход MPPT не указан"),
+    ("must_ph188048pro", "Must", "PH18-8048 PRO", _inv(8000, 88, 80, 48, _mppt(450, 150, 430, 0, 160, eta=97, eta_k=0, headroom=0, pv_pmax=0, n_mppt_max=2)),
+     "х.х. 80 Вт (оценка) · ток на вход MPPT не указан"),
+    ("must_pv1911048exp", "Must", "PV19-11048 EXP", _inv(11000, 90, 80, 48, _mppt(500, 90, 450, 27, 150, eta=97, eta_k=0, headroom=0, pv_pmax=11000, n_mppt_max=2)),
+     "х.х. 80 Вт (оценка)"),
+    ("powmr_powhvm102m", "PowMr", "POW-HVM10.2M", _inv(10200, 91, 75, 48, _mppt(500, 90, 450, 0, 180, eta=97, eta_k=0, headroom=0, pv_pmax=10200, n_mppt_max=2)),
+     "х.х. 75 Вт (паспорт) · ток на вход MPPT не указан"),
+    ("powmr_powhvm82m", "PowMr", "POW-HVM8.2M", _inv(8200, 91, 70, 48, _mppt(500, 90, 450, 0, 160, eta=97, eta_k=0, headroom=0, pv_pmax=8200, n_mppt_max=2)),
+     "х.х. 70 Вт (паспорт) · ток на вход MPPT не указан"),
+    ("srne_asf48100s200h", "SRNE", "ASF48100S200-H", _inv(10000, 90, 80, 48, _mppt(500, 125, 425, 22, 200, eta=97, eta_k=0, headroom=0, pv_pmax=11000, n_mppt_max=2)),
+     "х.х. 80 Вт (оценка)"),
+    ("srne_asf4880s180h", "SRNE", "ASF4880S180-H", _inv(8000, 90, 80, 48, _mppt(500, 125, 425, 22, 180, eta=97, eta_k=0, headroom=0, pv_pmax=11000, n_mppt_max=2)),
+     "х.х. 80 Вт (оценка)"),
+    ("victron_quattro4810000140100100230v", "Victron", "Quattro 48/10000/140-100/100 230V", _inv(8000, 94, 60, 48),
+     "х.х. 60 Вт (паспорт) · без MPPT"),
+    ("victron_quattro4815000200100100230v", "Victron", "Quattro 48/15000/200-100/100 230V", _inv(12000, 94, 110, 48),
+     "х.х. 110 Вт (паспорт) · без MPPT"),
+    ("voltronic_axpertmaxii8kw800048", "Voltronic", "Axpert MAX II 8KW (8000-48)", _inv(8000, 91, 75, 48, _mppt(500, 90, 450, 0, 150, eta=97, eta_k=0, headroom=0, pv_pmax=8000, n_mppt_max=2)),
+     "х.х. не более 75 Вт (паспорт) · ток на вход MPPT не указан"),
+    ("voltronic_axpertmaxii11kva1100048", "Voltronic", "Axpert MAX II 11KVA (11000-48)", _inv(11000, 91, 75, 48, _mppt(500, 90, 450, 0, 150, eta=97, eta_k=0, headroom=0, pv_pmax=11000, n_mppt_max=2)),
+     "х.х. не более 75 Вт (паспорт) · ток на вход MPPT не указан"),
+    ("voltronic_axpertmaxiitwin11kw", "Voltronic", "Axpert MAX II TWIN 11KW", _inv(11000, 91, 80, 48, _mppt(500, 90, 450, 27, 150, eta=97, eta_k=0, headroom=0, pv_pmax=11000, n_mppt_max=2)),
+     "х.х. 80 Вт (оценка)"),
+    ("voltronic_axpertmaxiitwin8kw", "Voltronic", "Axpert MAX II TWIN 8KW", _inv(8000, 91, 80, 48, _mppt(500, 90, 450, 27, 150, eta=97, eta_k=0, headroom=0, pv_pmax=8000, n_mppt_max=2)),
+     "х.х. 80 Вт (оценка)"),
+    ("voltronic_axpertmaxiii11kw", "Voltronic", "Axpert MAX III 11KW", _inv(11000, 91, 80, 48, _mppt(500, 90, 450, 27, 150, eta=97, eta_k=0, headroom=0, pv_pmax=12000, n_mppt_max=2)),
+     "х.х. 80 Вт (оценка)"),
+    ("voltronic_axpertmaxeduplex11kw", "Voltronic", "Axpert MAX E Duplex 11KW", _inv(11000, 91, 70, 48, _mppt(500, 90, 450, 27, 150, eta=97, eta_k=0, headroom=0, pv_pmax=11000, n_mppt_max=2)),
+     "х.х. не более 70 Вт (паспорт)"),
+    ("voltronic_axpertultra11kw", "Voltronic", "Axpert Ultra 11KW", _inv(11000, 91, 80, 48, _mppt(500, 90, 450, 27, 150, eta=97, eta_k=0, headroom=0, pv_pmax=12000, n_mppt_max=2)),
+     "х.х. 80 Вт (оценка)"),
+    ("voltronic_axpertultra8kw", "Voltronic", "Axpert Ultra 8KW", _inv(8000, 91, 80, 48, _mppt(500, 90, 450, 27, 150, eta=97, eta_k=0, headroom=0, pv_pmax=10000, n_mppt_max=2)),
+     "х.х. 80 Вт (оценка)"),
 ])
 
 

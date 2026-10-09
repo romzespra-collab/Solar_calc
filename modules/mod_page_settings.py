@@ -179,8 +179,11 @@ class SettingsPage:
         lay = self.lay_bat_extra
         while lay.count():
             it = lay.takeAt(0)
-            if it.widget() is not None:
-                it.widget().deleteLater()
+            old = it.widget()
+            if old is not None:                   # сразу убрать с экрана, удалить — когда окно освободится
+                old.hide()
+                old.setParent(None)
+                old.deleteLater()
         self.bat_extra_w = []
         for i, it in enumerate(self.s.get("bat_extra") or []):
             w = QWidget()
