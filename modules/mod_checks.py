@@ -1,7 +1,10 @@
-"""mod_checks.py  v1.9.7
+"""mod_checks.py  v1.9.9
 проверки схемы, проводов, MPPT, АКБ, инвертора
 
 Журнал:
+v1.9.9: общий вход MPPT (shared_checks): поля параллельно — напряжение входа за год, потери против отдельных
+        входов (кВт·ч, %), срезка током входа, обратный ток в поле, предохранители при 3+ цепочках, Isc входа,
+        разные панели; поле — «Поле N → вход 1 ∥ поле 1»; полей больше, чем входов, — совет «параллельно».
 v1.9.7: гибрид + отдельные MPPT: проверка кабеля контроллер → АКБ (раньше не проверялся), заряд — «инвертор
         до N А + отдельные MPPT до M А», упор в пределы — «инвертора и отдельных MPPT»; «цепочки» — по числу.
 v1.9.0: проверки каждого поля на своём входе MPPT / контроллере; полей больше, чем входов у инвертора, — ошибка.
@@ -12,7 +15,9 @@ v1.3.0: вынесено из solar_calc.pyw v1.2.1; проверки на од�
 """
 
 from .mod_base import MONTHS_S, DAYS
-from .mod_model import wire_r, year_kwh, ampacity, bank_desc, group_name, field_label, field_status, inv_inputs_used, plural
+from .mod_model import (wire_r, year_kwh, ampacity, bank_desc, group_name, field_label, field_status, inv_inputs_used,
+                        plural, shared_status, dir_word, fmt_t, field_mates)
+from .mod_panels import PANEL_DB
 
 
 def make_checks(s, c, res):
@@ -59,16 +64,21 @@ def make_checks(s, c, res):
     for i, fc in enumerate(c["fields"][1:], 1):
         lvl, msg, n = field_status(fc, tmin, tmax)
         lab = field_label(c, i)
-        what = (f"{lab[:1].upper() + lab[1:]}: {n['npan']} {plural(n['npan'], 'панель', 'панели', 'панелей')} "
+        mates = field_mates(c, i)
+        if mates:
+            lab += " ∥ " + ", ".join(f"поле {j + 1}" for j in mates)
+        what = (f"Поле {i + 1} → {lab}: {n['npan']} {plural(n['npan'], 'панель', 'панели', 'панелей')} "
                 f"({fc['ns']} посл. × {fc['np']} пар.), "
                 f"Vmp {n['vmp']:.0f} В, Voc на морозе {n['voc_cold']:.0f} В, ток {n['i']:.1f} А")
         ch.append((lvl, what + (f" — {msg}." if msg else " — в норме.")))
+    ch += shared_checks(c, res, tmin, tmax)
     used = inv_inputs_used(c)
     nmax = int(float(s["n_mppt_max"]))
     if used > nmax:
         ch.insert(0, ("err", (f"Полей на {used} входов MPPT, а у инвертора {nmax}." if c["builtin"] else
                               f"Полей на {used} контроллеров, а указано {nmax} шт.")
-                      + " Уберите поле или подключите два поля на один вход только с одинаковыми панелями и схемой."))
+                      + " Уберите поле или подключите его параллельно на занятый вход (правый клик по полю → "
+                        "«На вход …») — лучше к полю с тем же числом таких же панелей последовательно."))
     if year_kwh(res, "clear") < 0.02 * c["pstc_tot"] / 1000 * 365:
         ch.insert(0, ("err", f"MPPT почти не запускается: Vmp цепочки {ns * c['vmp']:.1f} В, а нужно больше {c['vin_min']:.1f} В. Больше панелей последовательно."))
     clip_y = sum((res[(m, 'avg')]['wh'][6] - res[(m, 'avg')]['wh'][7]) * DAYS[m] for m in range(12)) / 1000
@@ -100,6 +110,70 @@ def make_checks(s, c, res):
         ch.append(("info", "Алюминий: только клеммы Al/Cu и контактная паста, иначе контакты окисляются и греются."))
     if float(s["horizon"]) > 0:
         ch.append(("info", f"Прямое солнце ниже {float(s['horizon']):.0f}° над горизонтом не учитывается (деревья, дома)."))
+    return ch
+
+
+def shared_checks(c, res, tmin, tmax):
+    """Общие входы MPPT (несколько полей параллельно): как ведут себя за год — напряжение входа, потери против
+    отдельных входов, срезка током входа, обратный ток в поле, предохранители, разные панели."""
+    ch = []
+    fields = c["fields"]
+    head = "Вход MPPT" if c["builtin"] else "Контроллер"       # «Вход MPPT 1» / «Контроллер 1»
+    of = "входа MPPT" if c["builtin"] else "контроллера"
+    for q, sh in enumerate(c["shared"]):
+        mem = sh["members"]
+        lvl, msg, n = shared_status(c, sh, tmin, tmax)
+        names = " + ".join(f"поле {i + 1}" for i in mem)
+        st = {(m, w): res[(m, w)]["shared"][q] for m in range(12) for w in ("avg", "clear") if (m, w) in res}
+        y = {k: sum(st[(m, "avg")][k] * DAYS[m] for m in range(12) if (m, "avg") in st) / 1000 for k in ("comb", "free", "sep")}
+        mis, clip = max(0.0, y["sep"] - y["free"]), max(0.0, y["free"] - y["comb"])
+        pct = mis / max(y["sep"], 1e-9) * 100
+        vs = [a for a in st.values() if a["vmax"] > 0]
+        vr = f"{min(a['vmin'] for a in vs):.0f}–{max(a['vmax'] for a in vs):.0f} В" if vs else "—"
+        sides = {(fields[i]["tilt"], fields[i]["aspect"]) for i in mem}
+        dirs = ", ".join(f"{fields[i]['tilt']:g}° {dir_word(fields[i]['aspect'])}" for i in mem)
+        why = ""
+        if n["spread"] > 3:
+            why = (f" Цепочки разного напряжения (Vmp {' / '.join(f'{v:.0f}' for v in n['vm'])} В), а MPPT держит одно "
+                   f"на всех — уравняйте число панелей последовательно или поставьте поля на разные входы.")
+        elif len(sides) > 1:
+            why = (" Поля смотрят в разные стороны: токи складываются, а напряжение почти одно — так подключать "
+                   "можно, пик входа ниже суммы полей.")
+        lv = "ok" if pct <= 1 else "warn" if pct <= 4 else "err"
+        ch.append((lv, f"{head} {sh['n']}: {names} параллельно ({dirs}) — напряжение {vr}; против "
+                       f"отдельных входов теряется ≈{mis:.0f} кВт·ч/год ({pct:.1f}%).{why}"))
+        clr = [(st[(m, "clear")]["imax"], st[(m, "clear")]["tmax"], m) for m in range(12) if (m, "clear") in st]
+        if clr:
+            ipk, tpk, mpk = max(clr)
+            imax = fields[mem[0]]["iin_max"]
+            cp = clip / max(y["free"], 1e-9) * 100
+            if imax > 0 and (cp > 0.5 or ipk >= 0.99 * imax):
+                ch.append(("warn" if cp > 0.5 else "info",
+                           f"Ток {of} {sh['n']} упирается в предел {imax:g} А (сумма полей до {n['imp']:.1f} А, "
+                           f"в ясный полдень): срезка ≈{clip:.0f} кВт·ч/год ({cp:.1f}%)."))
+            else:
+                ch.append(("ok", f"Ток {of} {sh['n']}: пик ≈{ipk:.1f} А в ясный день ({MONTHS_S[mpk]}, "
+                                 f"{fmt_t(tpk)})" + (f" из {imax:g} А." if imax > 0 else ".")))
+        for i in mem:
+            rv = min((a["irev"].get(i, 0.0) for a in st.values()), default=0.0)
+            if rv < -0.05:
+                ch.append(("err", f"Поле {i + 1} на входе {sh['n']} забирает ток до {-rv:.1f} А — его Voc ниже "
+                                  f"напряжения входа. Так подключать нельзя: одинаковое число панелей последовательно "
+                                  f"или разные входы."))
+        if n["nstr"] >= 3:
+            ch.append(("warn", f"На входе {sh['n']} {n['nstr']} {plural(n['nstr'], 'цепочка', 'цепочки', 'цепочек')} "
+                               f"параллельно — на каждую предохранитель (при КЗ в одной в неё идёт ток остальных)."))
+        h = fields[mem[0]]
+        if h["iin_max"] > 0 and n["isc"] > h["iin_max"]:
+            ch.append(("info", f"Isc входа {sh['n']} — {n['isc']:.1f} А (больше рабочего {h['iin_max']:g} А): MPPT "
+                               f"ограничит ток, но проверьте в паспорте «макс. ток КЗ входа» (Isc max)."))
+        keys = {fields[i]["key"] for i in mem}
+        if len(keys) > 1:
+            pn = [PANEL_DB[k][1] if k in PANEL_DB else k for k in keys]
+            ch.append(("info", f"На входе {sh['n']} разные панели ({'; '.join(pn)}): токи складываются — это "
+                               f"нормально, если Vmp цепочек близки."))
+        if msg and lvl == "err" and pct <= 4:
+            ch.append(("warn", f"Вход {sh['n']}: {msg}."))
     return ch
 
 

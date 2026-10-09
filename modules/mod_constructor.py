@@ -1,4 +1,4 @@
-"""mod_constructor.py  v1.9.7
+"""mod_constructor.py  v1.9.9
 Конструктор станции — холст: во главе инвертор; слева поля панелей на его входах MPPT; от инвертора вниз —
 линия к шине АКБ, к этой линии сбоку подключены отдельные MPPT-контроллеры со своими полями; внизу — сборки
 АКБ на шине; справа — дом и сеть. Линии «живые» (зигзаг с бегущими точками), цвет — проверка (✓ ⚠ ✗).
@@ -6,6 +6,11 @@
 запоминается); добавить / убрать / копия — правый клик (меню).
 
 Журнал:
+v1.9.9: поля параллельно на одном входе MPPT: ставятся рядом выше, над своим полем (ряды — столько, сколько
+        нужно), линия входит в линию своего поля перед входом — узел ● (у каждого своя дорожка); у инвертора
+        без MPPT — на контроллер своего поля. Меню: «⇄ Вход MPPT» (свой / параллельно с полем N),
+        «＋ Поле параллельно на этот вход», «＋ Поле параллельно на занятый вход MPPT ▸» (сигнал attach).
+        dir_word — в mod_model (нужна и проверкам).
 v1.9.7: исправлено: узлы впритык (линия из одной точки) — схема больше не падает при каждой перерисовке;
         потянуть подпись кабеля — ошибка и потерянный клик; убраны мёртвые ветки «＋»-узлов и пунктирных узлов.
 v1.9.5: раскладка по умолчанию — точно как у пользователя: поля инвертора справа налево (поле 1 / MPPT 1 —
@@ -41,18 +46,13 @@ LVL = {"ok": _OK, "warn": _WARN, "err": _ERR}
 C_INV, C_BAT, C_PV, C_CTL, C_HOUSE, C_GRID, C_BUS = "#3ecf8e", "#46a8e0", "#e8b04a", "#b48cf0", "#3ecf8e", "#8a91a3", "#36c2d9"
 
 
-def dir_word(aspect):
-    """Азимут → «юг», «юго-запад», … (0 — юг, −90 — восток, +90 — запад)."""
-    a = (float(aspect) + 360) % 360
-    return ("юг", "юго-запад", "запад", "северо-запад", "север", "северо-восток", "восток", "юго-восток")[int((a + 22.5) // 45) % 8]
-
-
 class StationCanvas(QWidget):
     """Рисует граф станции из data (готовит страница настроек) и сообщает о выборе / добавлении / удалении."""
     picked = Signal(str, int)          # узел: inv, field, ctl, bat, house, grid, cable_pv, cable_bus, cable_ctl
     add = Signal(str)                  # pv, ctl, bat
     remove = Signal(str, int)          # field, bat
     clone = Signal(str, int)           # field
+    attach = Signal(int, int)          # поле → параллельно с полем № на его вход (−1 — на свой вход)
     moved = Signal(dict)               # места узлов после перетаскивания: {ключ: [x, y]}
 
     def __init__(self, parent=None):
@@ -236,17 +236,29 @@ class StationCanvas(QWidget):
         M, G = 16, 40
         CH_F, CH_I, CH_C, CH_B, CH_H = 118, 150, 96, 106, 100
         A, B = d["a"], d["b"]
-        nA = max(1, len(A))
+        AO = [f for f in A if not f.get("join")]               # на своём входе
+        AJ = [f for f in A if f.get("join")]                   # параллельно с другим — рядом выше, над ним
+        nA = max(1, len(AO))
         ncols = 1 + nA + len(B)
         CW = max(130.0, min(200.0, (W - 2 * M - (ncols - 1) * G) / ncols))
         col = CW + G
         y0 = 14
         R = {}
         xa = M + col                                           # первый столбец — сеть и дом
-        for i, f in enumerate(A):                              # справа налево: поле 1 — ближе к отдельным MPPT
-            R["field:" + f["key"]] = QRectF(xa + (nA - 1 - i) * col, y0, CW, CH_F)
+        nrow = -(-len(AJ) // (nA + 1)) if AJ else 0            # рядов параллельных полей (место — столбцы 0…nA)
+        ya = y0 + nrow * (CH_F + 34)
+        hx = {}
+        for i, f in enumerate(AO):                             # справа налево: поле 1 — ближе к отдельным MPPT
+            R["field:" + f["key"]] = QRectF(xa + (nA - 1 - i) * col, ya, CW, CH_F)
+            hx[f["key"]] = nA - i                              # столбец (0 — сеть)
+        free = [(r, cc) for r in range(nrow) for cc in range(nA + 1)]
+        for f in AJ:                                           # ближайшее свободное место над своим хозяином
+            hc = hx.get(f["join"], nA)
+            r, cc = min(free, key=lambda t: (t[0], abs(t[1] - hc), -t[1]))
+            free.remove((r, cc))
+            R["field:" + f["key"]] = QRectF(M + cc * col, ya - (r + 1) * (CH_F + 34), CW, CH_F)
         a_mid = xa + (nA * col - G) / 2
-        R["inv"] = QRectF(a_mid - CW / 2, y0 + CH_F + 100, CW, CH_I)
+        R["inv"] = QRectF(a_mid - CW / 2, ya + CH_F + 100, CW, CH_I)
         xb = xa + nA * col                                     # отдельные MPPT — правее полей инвертора
         per = max(1, int((W - M - xb + G + 1) // col))
         for j, b in enumerate(B):
@@ -254,7 +266,8 @@ class StationCanvas(QWidget):
             x = min(xb + cc * col, max(M, W - M - CW))
             yf = y0 + rr * (CH_F + 40 + CH_C + 40)
             R["field:" + b["key"]] = QRectF(x, yf, CW, CH_F)
-            R["ctl:" + b["key"]] = QRectF(x, yf + CH_F + 40, CW, CH_C)
+            if not b.get("join"):                              # параллельно с другим полем — на его контроллер
+                R["ctl:" + b["key"]] = QRectF(x, yf + CH_F + 40, CW, CH_C)
         inv = R["inv"]
         R["grid"] = QRectF(M, inv.center().y() - CH_H / 2, CW, CH_H)
         R["house"] = QRectF(M, max(R["grid"].bottom() + 40, inv.bottom() + 100), CW, CH_H)
@@ -408,6 +421,33 @@ class StationCanvas(QWidget):
             return "t" if y0 < y1 else "b"
         return "l" if x0 < x1 else "r"
 
+    def _join_route(self, r, hp, host, boxes, k=0):
+        """Линия поля, подключённого параллельно, — в линию поля-хозяина (hp) перед входом MPPT: узел «∥».
+        Поле выше ряда хозяев: вниз в просвет между рядами, вбок в просвет у хозяина, вниз к узлу.
+        k — какое по счёту поле у этого хозяина: своя дорожка (линии не сливаются)."""
+        (x0, y0), (x1, y1) = hp[-2], hp[-1]
+        L = math.hypot(x1 - x0, y1 - y0)
+        dd = min(28.0 + 9.0 * k, 0.8 * L)
+        t = (L - dd) / L if L > 0 else 0.0
+        jx, jy = x0 + (x1 - x0) * t, y0 + (y1 - y0) * t
+        if r.bottom() < host.top() - 6 and jy > host.bottom():
+            mx = r.center().x()
+            yg = (r.bottom() + host.top()) / 2 + 6.0 * k
+            side = (mx < host.center().x()) if abs(mx - host.center().x()) > 4 else (jx < host.center().x())
+            xg = host.left() - 14 - 9.0 * k if side else host.right() + 14 + 9.0 * k
+            xg = self._clear_v(xg, yg, jy, boxes)
+            pts = [(mx, r.bottom()), (mx, yg), (xg, yg), (xg, jy), (jx, jy)]
+            if not self._cross(pts, boxes):
+                return self._simplify(pts)
+        jr = QRectF(jx - 1, jy - 1, 2, 2)
+        ax, _ = self._entry(r, jr)
+        pts = self._route(r, jr, 0, boxes, ax, top=r.bottom() < jr.top() - 6)
+        if abs(pts[-1][0] - jx) < 1 or abs(pts[-1][1] - jy) < 1:
+            pts[-1] = (jx, jy)
+        else:
+            pts = pts + [(jx, jy)]
+        return self._simplify(pts)
+
     @staticmethod
     def _lanes(entries, half, skip0=(), step=14.0):
         """Дорожки входа (сдвиг от середины стороны): линия входит напротив своего источника (прямо, без
@@ -498,7 +538,9 @@ class StationCanvas(QWidget):
             return [self._box(r) for k, r in R.items() if r not in keep]
         # ── входы инвертора: поля (каждый вход MPPT — своя линия), дом, сеть — дорожки по сторонам ──
         # 1-й проход — какой стороной линия на самом деле входит в инвертор; 2-й — по дорожкам этой стороны
-        src = [((f["key"], q), R["field:" + f["key"]]) for f in A for q in range(f["k"])] + \
+        AO, AJ = [f for f in A if not f.get("join")], [f for f in A if f.get("join")]   # свой вход / параллельно
+        BO, BJ = [b for b in B if not b.get("join")], [b for b in B if b.get("join")]
+        src = [((f["key"], q), R["field:" + f["key"]]) for f in AO for q in range(f["k"])] + \
               [("house", R["house"]), ("grid", R["grid"])]
         ent, axes = [], {}
         for key, r in src:
@@ -508,14 +550,14 @@ class StationCanvas(QWidget):
             c, ic = r.center(), inv.center()
             spread = 0.0
             if key not in ("house", "grid"):                       # поле на k входов — его линии врозь
-                fk = next(f["k"] for f in A if f["key"] == key[0])
+                fk = next(f["k"] for f in AO if f["key"] == key[0])
                 spread = (key[1] - (fk - 1) / 2) * 44
             ent.append((key, side, ((c.x() - ic.x()) if side in ("t", "b") else (c.y() - ic.y())) + spread))
             axes[key] = ("v" if side in ("t", "b") else "h", top and side == "t", side)
         hw, hh = inv.width() / 2 - 14, inv.height() / 2 - 14
         lane = self._lanes(ent, {"t": hw, "b": hw, "l": hh, "r": hh}, skip0=("b",), step=22.0)
-        ports, cab = [], []                                         # входы MPPT: (точка, сторона, №, цвет, дорожка)
-        for f in A:
+        ports, cab, own_pts = [], [], {}                            # входы MPPT: (точка, сторона, №, цвет, дорожка)
+        for f in AO:
             r = R["field:" + f["key"]]
             for q in range(f["k"]):
                 key = (f["key"], q)
@@ -526,7 +568,19 @@ class StationCanvas(QWidget):
                 self._zig(p, pts, col)
                 if q == 0:
                     cab.append((pts, f["cable"], col, f["idx"]))
+                    own_pts[f["key"]] = pts
                 ports.append((pts[-1], self._end_side(pts), n, col, lane[key]))
+        joints, nj = [], {}                                         # параллельно: в линию своего хозяина у входа
+        for f in AJ:
+            hp = own_pts.get(f["join"])
+            if not hp:
+                continue
+            r = R["field:" + f["key"]]
+            k = nj[f["join"]] = nj.get(f["join"], -1) + 1
+            pts = self._join_route(r, hp, R["field:" + f["join"]], others(r, inv), k)
+            col = LVL.get(f["lvl"], C_GRID)
+            self._zig(p, pts, col)
+            joints.append((pts[-1], col))
         pfont = QFont(self.font())
         pfont.setPointSizeF(max(6.5, pfont.pointSizeF() - 2.2))
         pfont.setBold(True)
@@ -552,13 +606,21 @@ class StationCanvas(QWidget):
         y_from = inv.bottom() if y_bus >= inv.bottom() else inv.top()
         self._zig(p, [(xv, y_from), (xv, y_bus)], bus_col, 3.2, amp=4, flow=-1)
         # ── отдельные MPPT (приборы) — к линии «АКБ → инвертор»: у каждого своя точка на линии (дорожка) ──
-        for b in B:                                                 # поле → свой контроллер
+        for b in BJ:                                                # поле → на контроллер другого поля
+            rf, rc = R["field:" + b["key"]], R.get("ctl:" + b["join"])
+            if rc is None:
+                continue
+            ax, side = self._entry(rf, rc)
+            pts = self._route(rf, rc, 18, others(rf, rc), ax, top=rf.bottom() < rc.top() - 6)
+            self._zig(p, pts, LVL.get(b["lvl"], C_GRID))
+            joints.append((pts[-1], LVL.get(b["lvl"], C_GRID)))
+        for b in BO:                                                # поле → свой контроллер
             rf, rc = R["field:" + b["key"]], R["ctl:" + b["key"]]
             ax, side = self._entry(rf, rc)
             pts = self._route(rf, rc, 0, others(rf, rc), ax, top=rf.bottom() < rc.top() - 6)
             self._zig(p, pts, LVL.get(b["lvl"], C_GRID))
         on_line, above, below, beside = [], [], [], []
-        for b in B:
+        for b in BO:
             rc = R["ctl:" + b["key"]]
             cy = rc.center().y()
             if rc.left() - 8 <= xv <= rc.right() + 8 and t0 <= cy <= t1:
@@ -582,7 +644,7 @@ class StationCanvas(QWidget):
         for b in on_line:
             rc = R["ctl:" + b["key"]]
             self._label(p, rc.center().x(), rc.bottom() + 12, b["cable2"], C_BUS, "cable_ctl", b["idx"])
-        for b in B:
+        for b in BO:
             if b["key"] not in tys:
                 continue
             rc = R["ctl:" + b["key"]]
@@ -614,6 +676,8 @@ class StationCanvas(QWidget):
         for b in B:
             self._node(p, R["field:" + b["key"]], "☀", b["big"], b["lines"], C_PV, "field", b["idx"], b.get("tip", ""),
                        big_col=pv_col, key="field:" + b["key"])
+            if b.get("join"):
+                continue
             ct = b["ctl"]
             self._node(p, R["ctl:" + b["key"]], "🔀", ct["big"], ct["lines"], C_CTL, "ctl", b["idx"], ct.get("tip", ""),
                        key="ctl:" + b["key"])
@@ -624,6 +688,11 @@ class StationCanvas(QWidget):
         self._node(p, R["grid"], "🔌", gr["big"], gr["lines"], C_GRID, "grid", 0, gr.get("tip", ""), key="grid")
         self._node(p, inv, "⚡", iv["big"], iv["lines"], C_INV, "inv", 0, iv.get("tip", ""),
                    badge="MPPT" if iv["builtin"] else None, key="inv")
+        for (x, y), col in joints:                                  # узел параллельного подключения
+            c = QColor(col)
+            p.setPen(QPen(QColor(self._c("bg")), 1.6))
+            p.setBrush(c)
+            p.drawEllipse(QPointF(x, y), 5, 5)
         # ── входы MPPT — там, где в инвертор входит линия поля ──
         p.setFont(pfont)
         for ((x, y), side, n, col, off), (rr, text) in zip(ports, prects):
@@ -724,6 +793,25 @@ class StationCanvas(QWidget):
         if h:
             kind, idx, _, key = h
             m.addAction("⚙ Настроить", lambda: (self.select(kind, idx), self.picked.emit(kind, idx)))
+            pr = d.get("par") or {}
+            if kind == "field" and idx in (pr.get("host") or {}):            # поле на входе инвертора — куда подключено
+                sub = m.addMenu(f"⇄ {pr['word'][:1].upper() + pr['word'][1:]}")
+                cur = pr["host"][idx]
+                a = sub.addAction(f"Свой {pr['word'].split()[0]}", lambda i=idx: self.attach.emit(i, -1))
+                a.setCheckable(True)
+                a.setChecked(cur < 0)
+                a.setEnabled(cur < 0 or pr.get("free", False))
+                for t, lab in pr.get("targets", []):
+                    if t == idx:
+                        continue
+                    a = sub.addAction(f"Параллельно: {lab}", lambda i=idx, t=t: self.attach.emit(i, t))
+                    a.setCheckable(True)
+                    a.setChecked(cur == t)
+            if kind == "field" and (pr.get("targets") and (idx == 0 or idx in (pr.get("host") or {}))) and pr.get("can_add"):
+                hst = pr["host"].get(idx, -1) if idx else -1
+                t = idx if hst < 0 else hst
+                m.addAction(f"＋ Поле параллельно на этот {pr['word'].split()[0]} (другая сторона / угол)",
+                            lambda t=t: self.add.emit(f"pv@{t}"))
             if kind in ("field", "ctl"):
                 what = "поле" if kind == "field" else "MPPT с его полем"
                 m.addAction(f"⧉ Копия ({'ещё такое же поле' if kind == 'field' else 'ещё такой же MPPT с полем'})",
@@ -741,6 +829,12 @@ class StationCanvas(QWidget):
             m.addSeparator()
         a = m.addAction("＋ Поле на свободный вход MPPT инвертора", lambda: self.add.emit("pv"))
         a.setEnabled(bool(d.get("add_a")))
+        pr = d.get("par") or {}
+        if pr.get("targets"):
+            sub = m.addMenu(f"＋ Поле параллельно на занятый {pr['word']}")
+            sub.setEnabled(bool(pr.get("can_add")))
+            for t, lab in pr["targets"]:
+                sub.addAction(lab, lambda t=t: self.add.emit(f"pv@{t}"))
         a = m.addAction("＋ Отдельный MPPT (прибор) с полем — к линии АКБ", lambda: self.add.emit("ctl"))
         a.setEnabled(bool(d.get("add_b")))
         a = m.addAction("＋ Ещё сборка АКБ", lambda: self.add.emit("bat"))

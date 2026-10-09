@@ -1,7 +1,9 @@
-"""mod_config.py  v1.9.7
+"""mod_config.py  v1.9.9
 параметры станции по умолчанию, config.json: загрузка, проверка, сохранение
 
 Журнал:
+v1.9.9: pv_extra[…]["par"] — поле параллельно с полем № на его вход MPPT (1 — поле 1, 2… — другие); выпало
+        битое поле — номера ссылок пересчитываются.
 v1.9.7: config.json с BOM (сохранён Блокнотом) читается (utf-8-sig); save_config → True/False; битый config
         (Infinity, места узлов объектом, строки/null в данных PVGIS и погоды региона) больше не мешает запуску и
         расчёту — неверное сбрасывается; night_share (нигде не используется) убран.
@@ -56,6 +58,13 @@ def _field_item(it, s, ctl=False):
         return None
     if ctl:
         out["mppt"] = str(it["mppt"])
+    else:                                       # параллельно с полем № (1 — поле 1, 2… — другие на входах), 0 — свой вход
+        try:
+            par = int(float(it.get("par") or 0))
+        except (TypeError, ValueError, OverflowError):
+            par = 0
+        if 1 <= par <= PV_EXTRA_MAX + 1:
+            out["par"] = par
     return out
 
 
@@ -132,7 +141,17 @@ def clean_sys(d):
     out["bat_extra"] = ex
     for key, mx, ctl in (("pv_extra", PV_EXTRA_MAX, False), ("ctl_extra", CTL_EXTRA_MAX, True)):
         src = d.get(key) if isinstance(d.get(key), list) else []
-        out[key] = [x for x in (_field_item(it, out, ctl) for it in src) if x][:mx]
+        items = [(j, _field_item(it, out, ctl)) for j, it in enumerate(src)]
+        keep = [(j, x) for j, x in items if x][:mx]
+        out[key] = [x for _, x in keep]
+        if not ctl:                                        # выпало битое поле — ссылки «параллельно с полем №» по новым номерам
+            num = {j + 2: n + 2 for n, (j, _) in enumerate(keep)}
+            num[1] = 1
+            for n, x in enumerate(out[key]):
+                if "par" in x:
+                    x["par"] = num.get(x["par"], 0)
+                    if x["par"] in (0, n + 2):
+                        x.pop("par")
     pos = {}                                               # места узлов конструктора, переставленные мышью
     for k, v in (d.get("cons_pos") if isinstance(d.get("cons_pos"), dict) else {}).items():
         try:

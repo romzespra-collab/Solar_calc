@@ -1,7 +1,8 @@
-"""mod_page_results.py  v1.9.7
+"""mod_page_results.py  v1.9.9
 страницы «Прогноз», «Покрытие дома», «Горсеть», отчёт
 
 Журнал:
+v1.9.9: «Работа вне точки MPP» — и из-за разных полей на одном входе MPPT.
 v1.9.7: серия дней — заряд гибрида и отдельных MPPT раздельно (curve_ctl); экспорт CSV без расширения — добавит .csv.
 v1.9.4: погода «📍 Регион 5 лет»: карточка дня по региону, линия на графиках, год по региону в карточке «За год»;
         нет данных региона — «—» и подсказка (линии на графиках нет).
@@ -634,7 +635,8 @@ class ResultsPages:
         if out <= 0 and G > 0:
             note = f"<br><span style='color:{_WARN}'>⚠ MPPT не стартует: напряжения не хватает (нужно {c['vin_min']:.1f} В)</span>"
         elif mm > 0 and arr < mm * 0.98:
-            note = f"<br><span style='color:{_WARN}'>⚠ Работа вне точки MPP: −{_fmt(mm - arr)} Вт (окно MPPT / лимит тока)</span>"
+            why = "окно MPPT / лимит тока" + (" / разные поля на одном входе" if c.get("shared") else "")
+            note = f"<br><span style='color:{_WARN}'>⚠ Работа вне точки MPP: −{_fmt(mm - arr)} Вт ({why})</span>"
         if conv > out0 + 0.5:
             what = "предел мощности PV инвертора" if c["builtin"] else "ток заряда"
             note += f"<br><span style='color:{_WARN}'>⚠ Упор в {what}: −{_fmt(conv - out0)} Вт</span>"

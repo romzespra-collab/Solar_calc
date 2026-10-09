@@ -1,7 +1,12 @@
-"""mod_page_settings.py  v1.9.7
+"""mod_page_settings.py  v1.9.9
 Страница «Настройки станции»: карточка «Моя станция» (что стоит), поля, пресеты, реакция на изменения.
 
 Журнал:
+v1.9.9: несколько полей на один вход MPPT (или один контроллер): у поля — «Вход MPPT» (свой / параллельно с
+        полем N), ＋ поле параллельно на занятый вход (копия панелей и схемы хозяина — напряжения равны);
+        убрать / копия / поле 1 → ссылки «параллельно с полем №» пересчитываются; «занято k из N» и раскладка
+        поля 1 — по входам (общий вход — один); лишние поля на отдельный MPPT — только те, кому нет входа;
+        проверка общего входа красит поля и шаг ③.
 v1.9.7: исправлено: «🗑 Убрать» на боковой панели убирал поле 1 / сборку 1 вместо выбранного (кнопка передавала
         checked=False как номер); «⧉ Копия» открывала не копию; инвертор без MPPT ставил 1 контроллер при 2 полях
         (ложная ошибка), копия поля в этом режиме не добавляла контроллер; «занято k из N» у поля 1 не считало
@@ -46,14 +51,15 @@ from .mod_fields import (INPUT_CARDS, INT_KEYS, INV_KEYS, WIRE_S_KEYS, WIRE_RANG
                          s2d, d2s)
 from .mod_model import (make_ctx, layouts, layout_status, best_layout, bank_series, layout_text,
                         inputs_word, plural, field_status, field_label, group_name, wire_r, ampacity,
-                        inv_inputs_used)
-from .mod_constructor import StationCanvas, dir_word as _dir_word
+                        inv_inputs_used, field_mates, shared_status, dir_word as _dir_word)
+from .mod_constructor import StationCanvas
 from .mod_config import BAT_EXTRA_MAX, PV_EXTRA_MAX, CTL_EXTRA_MAX
 from .mod_theme import _OK, _ERR, _WARN
 from .mod_widgets import Toggle, Segmented, NoWheelCombo, Stepper, PresetPicker, _lab, _card, _btn
 
 LVL_ICON = {"ok": "✓", "warn": "⚠", "err": "✗"}
 LVL_COL = {"ok": _OK, "warn": _WARN, "err": _ERR}
+LVL_ORDER = {"ok": 0, "info": 0, "warn": 1, "err": 2}
 
 
 class SettingsPage:
@@ -129,6 +135,7 @@ class SettingsPage:
         self.canvas.add.connect(self._cons_add)
         self.canvas.remove.connect(self._cons_remove)
         self.canvas.clone.connect(lambda k, i: self._fx_clone(i))
+        self.canvas.attach.connect(self._fx_attach)
         self.canvas.moved.connect(self._cons_moved)
         body.addWidget(self.canvas, 1)
         side = QFrame()
@@ -379,12 +386,33 @@ class SettingsPage:
         same = [i for i, f in enumerate(c["fields"]) if i > 0 and bool(f["ctl"]) == bool(fc["ctl"])]
         return kind, same.index(idx)
 
+    @staticmethod
+    def _par_targets(c):
+        """Поля, к которым можно подключить другое параллельно: стоят на своём входе инвертора (или контроллере)."""
+        return [i for i, f in enumerate(c["fields"]) if not f["ctl"] and f["host"] is None and f["slots"]]
+
     def _fx_page(self, c, idx):
         """Страница другого поля: (контроллер) / панели / схема / ориентация / проверка / копия, убрать."""
         box = self.box_fx
         self._clear(box)
         kind, j = self._fx_where(c, idx)
         it = (self.s.get(self._fx_key(kind)) or [])[j]
+        if kind == "pv":                                         # куда подключено: свой вход или параллельно с полем
+            builtin = c["builtin"]
+            box.addWidget(self._cap("Вход MPPT" if builtin else "Контроллер"))
+            cb = NoWheelCombo()
+            fc = c["fields"][idx]
+            own = fc["slots"][0] if fc["host"] is None and fc["slots"] else inv_inputs_used(c) + 1
+            cb.addItem(f"Свой {'вход' if builtin else 'контроллер'} ({'MPPT' if builtin else '№'} {own})", -1)
+            for t in self._par_targets(c):
+                if t != idx:
+                    cb.addItem(f"Параллельно с полем {t + 1} — {'MPPT' if builtin else 'контроллер'} "
+                               f"{c['fields'][t]['slots'][0]}", t)
+            cb.setCurrentIndex(max(0, cb.findData(-1 if fc["host"] is None else fc["host"])))
+            cb.setToolTip("Несколько полей на одном входе: напряжение одно на всех, токи складываются. Лучше — "
+                          "одинаковое число таких же панелей последовательно; стороны и углы могут быть разные.")
+            cb.activated.connect(lambda i, cb=cb, idx=idx: self._fx_attach(idx, int(cb.itemData(i))))
+            box.addWidget(cb)
         if kind == "ctl":
             box.addWidget(self._cap("MPPT-контроллер (к линии АКБ → инвертор)"))
             mp = PresetPicker(MPPT_DB, "", what="контроллер", allow_custom=False, vertical=True)
@@ -463,12 +491,27 @@ class SettingsPage:
             lab = field_label(c, idx)
             title = (f"🔀 {lab} — прибор на линии АКБ, поле {idx + 1}" if kind == "ctl" else f"☀ Поле {idx + 1} → {lab}")
             big = f"<span style='color:{LVL_COL[lvl]}'>{fc['pstc_tot'] / 1000:.2f} кВт · {LVL_ICON[lvl]} {msg or 'в норме'}</span>"
+            mates = field_mates(c, idx)
+            if mates:
+                sh = next(x for x in c["shared"] if idx in x["members"])
+                slvl, smsg, sn = shared_status(c, sh, tmin, tmax)
+                if LVL_ORDER[slvl] > LVL_ORDER[lvl]:
+                    lvl, msg = slvl, smsg
+                elif smsg and not msg:
+                    msg = smsg
+                title += " ∥ " + ", ".join(f"поле {j + 1}" for j in mates)
+                big = f"<span style='color:{LVL_COL[lvl]}'>{fc['pstc_tot'] / 1000:.2f} кВт · {LVL_ICON[lvl]} {msg or 'в норме'}</span>"
             if idx > 0 and getattr(self, "fx_status", None) is not None:
                 try:
-                    self.fx_status.setText(
-                        f"{fc['npan']} {plural(fc['npan'], 'панель', 'панели', 'панелей')} · Vmp {n['vmp']:.0f} В "
-                        f"(окно {fc['vin_min']:.0f}–{fc['vmpp_max']:g} В) · Voc на морозе {n['voc_cold']:.0f} В "
-                        f"(до {fc['v_max']:g} В) · ток {n['i']:.1f} А" + (f" (до {fc['iin_max']:g} А)" if fc["iin_max"] else ""))
+                    txt = (f"{fc['npan']} {plural(fc['npan'], 'панель', 'панели', 'панелей')} · Vmp {n['vmp']:.0f} В "
+                           f"(окно {fc['vin_min']:.0f}–{fc['vmpp_max']:g} В) · Voc на морозе {n['voc_cold']:.0f} В "
+                           f"(до {fc['v_max']:g} В) · ток {n['i']:.1f} А" + (f" (до {fc['iin_max']:g} А)" if fc["iin_max"] else ""))
+                    if mates:
+                        txt += (f"<br>∥ На {lab} вместе с " + ", ".join(f"полем {j + 1}" for j in mates)
+                                + f": Vmp цепочек {' / '.join(f'{v:.0f}' for v in sn['vm'])} В, ток входа до {sn['imp']:.1f} А"
+                                + (f" (предел {fc['iin_max']:g} А)" if fc["iin_max"] else "")
+                                + ". Как поведут себя за год — «Проверки» на странице результатов.")
+                    self.fx_status.setText(txt)
                 except RuntimeError:
                     pass
         elif kind == "bat":
@@ -522,32 +565,51 @@ class SettingsPage:
         inv_name = (d_inv[1] if d_inv[0] == "Типовые" else f"{d_inv[0]} {d_inv[1]}") if d_inv else "Свой инвертор"
         mdb = MPPT_DB.get(s.get("m_preset"))
         A, B, lines = [], [], [f"Инвертор: {inv_name}, {c['inv_p'] / 1000:g} кВт, АКБ {s['bat_v']} В"]
-        port = 0
+        nkeys = {}
+        for i, fc in enumerate(c["fields"]):
+            if i == 0:
+                nkeys[i] = "m"
+            else:
+                fk, fj = self._fx_where(c, i)
+                nkeys[i] = ("p" if fk == "pv" else "c") + str(fj)
+        sh_lvl = {}                                              # общий вход: его проверка — каждому полю на нём
+        for sh in c["shared"]:
+            r = shared_status(c, sh, tmin, tmax)
+            for i in sh["members"]:
+                sh_lvl[i] = r
         for i, fc in enumerate(c["fields"]):
             lvl, msg, n = field_status(fc, tmin, tmax)
+            if i in sh_lvl and LVL_ORDER[sh_lvl[i][0]] > LVL_ORDER[lvl]:
+                lvl, msg = sh_lvl[i][:2]
+            mates = field_mates(c, i)
+            par = (" ∥ п." + ", ".join(str(j + 1) for j in mates)) if mates else ""
             d = PANEL_DB.get(fc["key"])
             pname = (f"{d[0] if d[0] != 'Типовые' else 'панели'} {fc['pmax']:g} Вт" if d else f"панели {fc['pmax']:g} Вт")
             lab = field_label(c, i)
             mark = LVL_ICON[lvl]
-            flines = [f"Поле {i + 1} → {lab.split(' (')[0]}", f"{fc['npan']} × {pname}",
+            head = (f"Поле {i + 1} ∥ поле {fc['host'] + 1} → {lab}" if fc["host"] is not None else
+                    f"Поле {i + 1} → {lab.split(' (')[0]}" + (f" ∥ {', '.join(str(j + 1) for j in mates)}" if mates else ""))
+            flines = [head, f"{fc['npan']} × {pname}",
                       f"{fc['ns']}S × {fc['np']}P" + (f" × {fc['k']} вх." if fc["k"] > 1 else "") + f" · {fc['tilt']:g}° {_dir_word(fc['aspect'])}",
                       (f"{mark} Vmp {n['vmp']:.0f} В · {n['i']:.1f} А", LVL_COL[lvl])]
             cab, clvl = self._cable_pv(fc)
             tip = f"Поле {i + 1} → {lab}: {fc['npan']} × {pname}\nVmp {n['vmp']:.0f} В, Voc на морозе {n['voc_cold']:.0f} В, " \
                   f"ток {n['i']:.1f} А — {mark} {msg or 'в норме'}"
-            if i == 0:
-                nkey = "m"
-            else:
-                fk, fj = self._fx_where(c, i)
-                nkey = ("p" if fk == "pv" else "c") + str(fj)
+            if mates:
+                tip += ("\nПараллельно на одном входе с " + ", ".join(f"полем {j + 1}" for j in mates)
+                        + ": напряжение одно, токи складываются")
+            nkey = nkeys[i]
             item = dict(idx=i, key=nkey, big=f"{fc['pstc_tot'] / 1000:.2f} кВт", lines=flines, lvl=lvl if clvl == "ok" else
                         ("err" if "err" in (lvl, clvl) else "warn"), cable=cab, tip=tip)
-            lines.append(f"  Поле {i + 1} → {lab}: {fc['npan']} × {pname}, {fc['ns']}S×{fc['np']}P, "
+            lines.append(f"  Поле {i + 1} → {lab}{par}: {fc['npan']} × {pname}, {fc['ns']}S×{fc['np']}P, "
                          f"{fc['pstc_tot'] / 1000:.2f} кВт, {fc['tilt']:g}° {_dir_word(fc['aspect'])} — {mark} {msg or 'в норме'}")
+            join = nkeys[fc["host"]] if fc["host"] is not None else None   # параллельно: линия — в линию хозяина
             if builtin and not fc["ctl"]:
-                item.update(port=port, k=fc["k"])
-                port += fc["k"]
+                item.update(port=fc["slots"][0] - 1, k=len(fc["slots"]), join=join)
                 A.append(item)
+            elif join:                                           # без MPPT: на контроллер другого поля
+                item["join"] = join
+                B.append(item)
             else:
                 md = MPPT_DB.get(fc["ctl"]) if fc["ctl"] else mdb
                 cname = md[1] if md else "свой контроллер"
@@ -571,8 +633,13 @@ class SettingsPage:
             if yg and yg["load"] > 0:
                 cover = (1 - yg["grid_load"] / yg["load"]) * 100
                 grid_y = yg["grid"]
-        used = sum(a["k"] for a in A)
-        return dict(
+        used = inv_inputs_used(c)
+        tg = self._par_targets(c)
+        par = dict(word="вход MPPT" if builtin else "контроллер", can_add=len(s.get("pv_extra") or []) < PV_EXTRA_MAX,
+                   free=(not builtin) or used < nports,
+                   targets=[(t, f"{'MPPT' if builtin else 'контроллер'} {c['fields'][t]['slots'][0]} · поле {t + 1}") for t in tg],
+                   host={i: (-1 if f["host"] is None else f["host"]) for i, f in enumerate(c["fields"]) if i > 0 and not f["ctl"]})
+        return dict(par=par,
             inv=dict(big=f"{c['inv_p'] / 1000:g} кВт", builtin=builtin, ports=nports if builtin else 0,
                      lines=[inv_name, f"{s['bat_v']} В · " + (inputs_word(nports) if builtin else
                                                     "без MPPT"),
@@ -580,7 +647,7 @@ class SettingsPage:
                              _OK if (not builtin or used <= nports) else _ERR)],
                      tip=f"{inv_name}: {c['inv_p'] / 1000:g} кВт, АКБ {s['bat_v']} В"),
             a=A, b=B, bats=bats,
-            add_a=(f"поле → MPPT {port + 1}" if builtin and port < nports and len(s.get("pv_extra") or []) < PV_EXTRA_MAX else None),
+            add_a=(f"поле → MPPT {used + 1}" if builtin and used < nports and len(s.get("pv_extra") or []) < PV_EXTRA_MAX else None),
             add_b=("отдельный MPPT" if len(s.get("ctl_extra") or []) < CTL_EXTRA_MAX else None),
             add_bat=len(s.get("bat_extra") or []) < BAT_EXTRA_MAX,
             rm_main=bool(int(s["n_in"]) > 1 or s.get("pv_extra") or (s.get("ctl_extra") and not builtin)),
@@ -600,7 +667,7 @@ class SettingsPage:
         # шаги: цвет по проверке
         s = self.s
         tmin, tmax = float(s["t_min"]), float(s["t_max"])
-        fl = [field_status(fc, tmin, tmax)[0] for fc in c["fields"]]
+        fl = [field_status(fc, tmin, tmax)[0] for fc in c["fields"]] + [shared_status(c, sh, tmin, tmax)[0] for sh in c["shared"]]
         iv = int(float(s.get("inv_bat_v", 0) or 0))
         st_inv = "err" if (iv and iv != int(s["bat_v"])) or inv_inputs_used(c) > int(s["n_mppt_max"]) else "ok"
         st_bat = "err" if c["mismatch_v"] or len({g["chem"] for g in c["groups"]}) > 1 else "ok"
@@ -647,8 +714,11 @@ class SettingsPage:
             if n:
                 self._cons_pick("bat", n)
             return
+        host = None
+        if kind.startswith("pv@"):                                # поле параллельно на вход поля №
+            kind, host = "pv", int(kind[3:])
         before = len(self.s.get(self._fx_key(kind)) or [])
-        self._fx_add(kind)
+        self._fx_add(kind, host)
         after = self.s.get(self._fx_key(kind)) or []
         if len(after) > before:
             c = make_ctx(self.s)
@@ -705,8 +775,8 @@ class SettingsPage:
         tag = "p" if src == "pv_extra" else "c"
         old = dict(s.get("cons_pos") or {})
         ex = [dict(x) for x in s[src]]
-        it = ex.pop(0)
-        s[src] = ex
+        it = ex[0]
+        s[src] = self._px_drop(ex, {0}, to_main=True) if src == "pv_extra" else ex[1:]
         self._pos_shift(tag, 0)
         pos = {k: v for k, v in s["cons_pos"].items() if k not in ("field:m", "ctl:m")}
         for node in ("field", "ctl"):
@@ -746,16 +816,16 @@ class SettingsPage:
         kind, j = self._fx_where(c, idx)
         key = self._fx_key(kind)
         ex = [dict(x) for x in s.get(key) or []]
-        if kind == "pv" and s.get("mppt_mode") == "builtin" and inv_inputs_used(c) >= int(s["n_mppt_max"]):
-            log.warning("⚠ У инвертора все входы MPPT заняты — копия не влезет")
+        own = kind == "pv" and not ex[j].get("par")              # копия параллельного поля — на тот же вход
+        if own and s.get("mppt_mode") == "builtin" and inv_inputs_used(c) >= int(s["n_mppt_max"]):
+            log.warning("⚠ У инвертора все входы MPPT заняты — копия не влезет. Можно параллельно на занятый вход: "
+                        "правый клик по полю → «＋ Поле параллельно»")
             return
         if len(ex) >= (PV_EXTRA_MAX if kind == "pv" else CTL_EXTRA_MAX):
             return
         ex.append(dict(ex[j]))
         s[key] = ex
-        if kind == "pv" and s.get("mppt_mode") != "builtin" and int(s["n_in"]) + len(ex) > int(s["n_mppt_max"]):
-            s["n_mppt_max"] = int(s["n_in"]) + len(ex)           # у отдельных контроллеров — ещё один такой же
-            self._set_widget("n_mppt_max", s["n_mppt_max"])
+        self._ctl_count()
         self._refresh_station()
         self._recalc_timer.start(200)
         fields = make_ctx(s)["fields"]                           # копия — последняя в своём списке
@@ -774,15 +844,16 @@ class SettingsPage:
             self._refresh_station()
             self._recalc_timer.start(200)
 
-    def _fx_add(self, kind):
+    def _fx_add(self, kind, host=None):
+        """Новое поле: на свободный вход MPPT / отдельный MPPT; host — индекс поля, к которому параллельно на его
+        вход (копия его панелей и схемы — напряжения равны; сторону и угол потом поменять)."""
         s = self.s
         key = self._fx_key(kind)
         ex = [dict(x) for x in s.get(key) or []]
         if kind == "pv":
-            used = int(s["n_in"]) + len(ex)
-            if s.get("mppt_mode") == "builtin" and used >= int(s["n_mppt_max"]):
+            if host is None and s.get("mppt_mode") == "builtin" and inv_inputs_used(make_ctx(s)) >= int(s["n_mppt_max"]):
                 log.warning(f"⚠ У инвертора {inputs_word(int(s['n_mppt_max']))} — все заняты. Поставьте отдельный MPPT "
-                            f"на линию АКБ (＋ отдельный MPPT)")
+                            f"на линию АКБ (＋ отдельный MPPT) или поле параллельно на занятый вход")
                 return
             if len(ex) >= PV_EXTRA_MAX:
                 return
@@ -790,6 +861,13 @@ class SettingsPage:
             return
         pk = s.get("p_preset") if s.get("p_preset") in PANEL_DB else "p410"
         it = dict(preset=pk, ns=int(s["ns"]), np=int(s["np"]), tilt=float(s["tilt"]), aspect=float(s["aspect"]))
+        if kind == "pv" and host is not None:
+            if host > 0 and 0 <= host - 1 < len(ex):
+                h = ex[host - 1]
+                it = dict(preset=h["preset"], ns=int(h["ns"]), np=1, tilt=float(h["tilt"]), aspect=float(h["aspect"]))
+            else:
+                it["np"] = 1
+            it["par"] = host + 1
         if kind == "ctl":
             it["mppt"] = s.get("m_preset") if s.get("m_preset") in MPPT_DB else "cn60"
             mp = MPPT_DB[it["mppt"]][2]
@@ -799,18 +877,52 @@ class SettingsPage:
             it["np"] = 1
         ex.append(it)
         s[key] = ex
-        if kind == "pv" and s.get("mppt_mode") != "builtin" and int(s["n_in"]) + len(ex) > int(s["n_mppt_max"]):
-            s["n_mppt_max"] = int(s["n_in"]) + len(ex)           # у отдельных контроллеров — ещё один такой же
-            self._set_widget("n_mppt_max", s["n_mppt_max"])
+        self._ctl_count()
         self._refresh_station()
         self._recalc_timer.start(200)
-        log.info("＋ Добавлено поле " + ("на вход MPPT" if kind == "pv" else "с отдельным MPPT на линии АКБ") + " — выберите панели и схему")
+        log.info("＋ Добавлено поле " + ("параллельно с полем " + str(host + 1) + " на его вход" if host is not None else
+                                        "на вход MPPT" if kind == "pv" else "с отдельным MPPT на линии АКБ")
+                 + " — выберите панели, угол и сторону")
+
+    def _ctl_count(self):
+        """Инвертор без MPPT: контроллеров — сколько входов занято полями (параллельные — на чужом)."""
+        s = self.s
+        if s.get("mppt_mode") != "builtin":
+            used = inv_inputs_used(make_ctx(s))
+            if used > int(s["n_mppt_max"]):
+                s["n_mppt_max"] = used                           # у отдельных контроллеров — ещё один такой же
+                self._set_widget("n_mppt_max", s["n_mppt_max"])
+
+    def _fx_attach(self, idx, host):
+        """Поле idx — параллельно с полем host на его вход MPPT (host < 0 — на свой вход)."""
+        s = self.s
+        c = make_ctx(s)
+        if not 0 < idx < len(c["fields"]) or c["fields"][idx]["ctl"]:
+            return
+        kind, j = self._fx_where(c, idx)
+        if host < 0:
+            if c["fields"][idx]["host"] is None:
+                return
+            if s.get("mppt_mode") == "builtin" and inv_inputs_used(c) >= int(s["n_mppt_max"]):
+                log.warning(f"⚠ У инвертора {inputs_word(int(s['n_mppt_max']))} — все заняты: на свой вход поле "
+                            f"{idx + 1} не встанет")
+                return
+            self._fx_set(kind, j, par=0)
+            log.info(f"⇄ Поле {idx + 1} — на свой вход")
+        else:
+            self._fx_set(kind, j, par=host + 1)
+            log.info(f"⇄ Поле {idx + 1} — параллельно с полем {host + 1} на его вход (одно напряжение на оба поля)")
+        self._ctl_count()
+        self._cons_pick("field", idx)
 
     def _fx_del(self, kind, i):
         key = self._fx_key(kind)
         ex = [dict(x) for x in self.s.get(key) or []]
         if 0 <= i < len(ex):
-            ex.pop(i)
+            if kind == "pv":
+                ex = self._px_drop(ex, {i})                  # кто был параллельно с ним — на свой вход
+            else:
+                ex.pop(i)
             self.s[key] = ex
             self._refresh_station()
             self._recalc_timer.start(200)
@@ -1082,34 +1194,59 @@ class SettingsPage:
             s["pv_pmax"] = 0
             self._set_widget("pv_pmax", 0)
             if mode_changed:                               # контроллеров — столько, сколько полей на них
-                s["n_mppt_max"] = max(1, int(s["n_in"]) + len(s.get("pv_extra") or []))
+                s["n_mppt_max"] = max(1, inv_inputs_used(make_ctx(s)))
                 self._set_widget("n_mppt_max", s["n_mppt_max"])
         self._fit_layout()
 
     def _overflow_to_ctl(self):
-        """Поля на входы инвертора: кому не хватило входа MPPT — на отдельный MPPT у линии АКБ (тот же контроллер)."""
+        """Поля на входы инвертора: кому не хватило входа MPPT — на отдельный MPPT у линии АКБ (тот же контроллер).
+        Поля параллельно на занятом входе входа не требуют — остаются."""
         s = self.s
         n = int(s["n_mppt_max"])
-        ex = [dict(x) for x in s.get("pv_extra") or []]
-        keep = max(0, n - 1)                                   # основному полю — хотя бы один вход
-        if len(ex) <= keep:
+        c = make_ctx(s)
+        if inv_inputs_used(c) <= n:
             return
+        ex = [dict(x) for x in s.get("pv_extra") or []]
         ce = [dict(x) for x in s.get("ctl_extra") or []]
         mp = s.get("m_preset") if s.get("m_preset") in MPPT_DB else "cn60"
-        moved = []
-        while len(ex) > keep and len(ce) < CTL_EXTRA_MAX:
-            it = ex.pop(keep)
-            ce.append(dict(it, mppt=mp))
-            moved.append(len(moved) + keep + 2)
-        if not moved:
+        over = sorted(i - 1 for i, fc in enumerate(c["fields"][:len(ex) + 1]) if i > 0 and fc["slots"] and fc["slots"][0] > n)
+        over = over[:max(0, CTL_EXTRA_MAX - len(ce))]
+        if not over:
             return
-        s["pv_extra"], s["ctl_extra"] = ex, ce
+        for j in over:
+            it = dict(ex[j], mppt=mp)
+            it.pop("par", None)
+            ce.append(it)
+        s["pv_extra"], s["ctl_extra"] = self._px_drop(ex, set(over)), ce
         s["cons_pos"] = {k: v for k, v in (s.get("cons_pos") or {}).items()
                          if not k.split(":")[-1].startswith(("p", "c"))}   # номера сменились — места заново
-        if moved:
-            log.warning(f"⚠ У инвертора {inputs_word(n)} — " + ("поле " if len(moved) == 1 else "поля ")
-                        + ", ".join(map(str, moved)) + " подключены к отдельному MPPT на линии АКБ. Чтобы все поля "
-                        f"шли в инвертор, выберите модель с {n + len(moved)} входами MPPT")
+        moved = [j + 2 for j in over]
+        log.warning(f"⚠ У инвертора {inputs_word(n)} — " + ("поле " if len(moved) == 1 else "поля ")
+                    + ", ".join(map(str, moved)) + " подключены к отдельному MPPT на линии АКБ. Чтобы все поля "
+                    "шли в инвертор, выберите модель с большим числом входов MPPT или подключите поле параллельно "
+                    "на занятый вход (правый клик по полю → «Вход MPPT»)")
+
+    @staticmethod
+    def _px_drop(ex, drop, to_main=False):
+        """pv_extra без полей drop (номера в списке): ссылки «параллельно с полем №» — по новым номерам, на убранное
+        поле — свой вход. to_main — убрано поле 1, а pv_extra[0] стало полем 1 (его хозяева → поле 1)."""
+        keep = [j for j in range(len(ex)) if j not in drop]
+        num = {1: 1}
+        for n, j in enumerate(keep):
+            num[j + 2] = n + 2
+        if to_main:
+            num[2] = 1
+        out = []
+        for n, j in enumerate(keep):
+            it = dict(ex[j])
+            if it.get("par"):
+                q = num.get(int(it["par"]), 0)
+                if q in (0, n + 2):
+                    it.pop("par")
+                else:
+                    it["par"] = q
+            out.append(it)
+        return out
 
     # ─────────────── схема (раскладка панелей) ───────────────
     def _layout_sig(self):
@@ -1142,7 +1279,8 @@ class SettingsPage:
 
     def _main_kmax(self):
         """Сколько входов может занять основное поле: остальные — под другие поля."""
-        return max(1, int(self.s["n_mppt_max"]) - len(self.s.get("pv_extra") or []))
+        c = make_ctx(self.s)                                     # входы других полей (параллельные — не в счёт)
+        return max(1, int(self.s["n_mppt_max"]) - (inv_inputs_used(c) - c["fields"][0]["k"]))
 
     def _on_layout(self, i):
         o = self.cb_layout.itemData(i)
@@ -1184,7 +1322,7 @@ class SettingsPage:
         voc_cold = ns * c["voc"] * (1 + c["bvoc"] * (float(s["t_min"]) - 25))
         lim = f" (предел {c['iin_max']:.0f} А)" if c["iin_max"] > 0 else ""
         kmax = int(s["n_mppt_max"])
-        k_all = inv_inputs_used(c) if not sep else k + len(s.get("pv_extra") or [])   # с другими полями
+        k_all = inv_inputs_used(c)                                # с другими полями (общий вход — один)
         where = (f"На {'каждый ' if k > 1 else ''}{'контроллер' if sep else 'вход MPPT'}: {ns * np_} "
                  f"{plural(ns * np_, 'панель', 'панели', 'панелей')} — ")
         free = (f" · занято {k_all} из {kmax}, свободно {kmax - k_all}" if kmax > k_all else
