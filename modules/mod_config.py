@@ -1,7 +1,8 @@
-"""mod_config.py  v1.9.2
+"""mod_config.py  v1.9.3
 параметры станции по умолчанию, config.json: загрузка, проверка, сохранение
 
 Журнал:
+v1.9.3: места «＋»-узлов (add_*) больше не хранятся — этих узлов нет.
 v1.9.2: mppt_mode — «есть свои MPPT» / «нет MPPT» (только для своего инвертора; у гибрида из базы — всегда свои).
 v1.9.1: cons_pos — места узлов конструктора, переставленные мышью {ключ: [x, y]} (с проверкой).
 v1.9.0: pv_extra — поля на других входах MPPT инвертора [{preset, ns, np, tilt, aspect}] (до 11);
@@ -74,7 +75,7 @@ DEFAULT_CONFIG = {"theme": "dark", "geometry": "", "sys": dict(DEFAULT_SYS),
                   "sky": {"names": True, "stars": True, "anim": True}}
 
 
-_POS_KEY = re.compile(r"inv|house|grid|add_pv|add_ctl|add_bat|bat:\d{1,2}|(field|ctl):(m|[pc]\d{1,2})")
+_POS_KEY = re.compile(r"inv|house|grid|bat:\d{1,2}|(field|ctl):(m|[pc]\d{1,2})")
 
 
 def clean_sys(d):

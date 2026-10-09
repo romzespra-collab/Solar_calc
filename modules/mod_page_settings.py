@@ -1,7 +1,9 @@
-"""mod_page_settings.py  v1.9.2
+"""mod_page_settings.py  v1.9.3
 Страница «Настройки станции»: карточка «Моя станция» (что стоит), поля, пресеты, реакция на изменения.
 
 Журнал:
+v1.9.3: добавлять — только правым кликом на схеме: кнопок «⧉ Копия поля», «＋ Другая сборка», «＋ Ещё сборка»
+        в боковой панели больше нет.
 v1.9.2: нет переключателя «встроенный / отдельный»: у гибрида (и своего инвертора) — свои входы MPPT, к ним
         подключаются поля; отдельные MPPT — отдельные приборы на линии АКБ («＋ отдельный MPPT»), своя страница
         у контроллера инвертора без MPPT. Старые настройки «гибрид + отдельный» переводятся сами: поле 1 — на вход
@@ -248,10 +250,6 @@ class SettingsPage:
             h.addLayout(vv)
         v.addLayout(h)
         v.addStretch(1)
-        h = QHBoxLayout()
-        h.addWidget(_btn("⧉ Копия поля", "chip", "Ещё такое же поле на следующий вход", lambda: self._fx_clone(0)))
-        h.addStretch(1)
-        v.addLayout(h)
         return w
 
     def _pg_dyn(self, name):
@@ -267,7 +265,6 @@ class SettingsPage:
         w, v = self._page()
         self.pk_bat = PresetPicker(BATTERY_DB, "Свои АКБ — параметры в карточке ниже", what="АКБ", vertical=True)
         self.pk_bat.changed.connect(lambda k: self._on_field("bat_preset", k))
-        self.pk_bat.extra_menu = lambda m: m.addAction("＋ Другая сборка", lambda: self._cons_add("bat"))
         self.w["bat_preset"] = self.pk_bat
         v.addWidget(self._cap("АКБ / ячейки"))
         v.addWidget(self.pk_bat)
@@ -277,11 +274,6 @@ class SettingsPage:
         self.lab_bank = self._hint(True)
         v.addWidget(self.lab_bank)
         v.addStretch(1)
-        h = QHBoxLayout()
-        self.btn_bat_add = _btn("＋ Другая сборка", "chip", "АКБ другого типа на ту же шину", lambda: self._cons_add("bat"))
-        h.addWidget(self.btn_bat_add)
-        h.addStretch(1)
-        v.addLayout(h)
         return w
 
     def _pg_house(self, name):
@@ -423,7 +415,6 @@ class SettingsPage:
         self.fx_status = self._hint(True)
         box.addWidget(self.fx_status)
         h = QHBoxLayout()
-        h.addWidget(_btn("⧉ Копия поля", "chip", "Ещё такое же поле", lambda idx=idx: self._fx_clone(idx)))
         h.addWidget(_btn("🗑 Убрать", "chip", "Убрать это поле", lambda idx=idx: self._cons_remove("field", idx)))
         h.addStretch(1)
         box.addLayout(h)
@@ -447,7 +438,6 @@ class SettingsPage:
         self.bx_hint = self._hint()
         box.addWidget(self.bx_hint)
         h = QHBoxLayout()
-        h.addWidget(_btn("＋ Ещё сборка", "chip", "Другая сборка АКБ", lambda: self._cons_add("bat")))
         h.addWidget(_btn("🗑 Убрать", "chip", "Убрать эту сборку", lambda j=j: self._cons_remove("bat", j)))
         h.addStretch(1)
         box.addLayout(h)
@@ -1289,7 +1279,6 @@ class SettingsPage:
         st.setValue(s["bat_packs"])
         st.setToolTip(f"Сборок по {nser} шт последовательно, параллельно — до 10" if nser > 1
                       else "Сколько АКБ параллельно, до 10")
-        self.btn_bat_add.setEnabled(len(s.get("bat_extra") or []) < BAT_EXTRA_MAX)
         for wd in getattr(self, "cab_bw_w", []):
             wd.setVisible(sep_any)
         self.cab_pv.setText("Кабель панели → инвертор" if builtin else "Кабель панели → контроллер")

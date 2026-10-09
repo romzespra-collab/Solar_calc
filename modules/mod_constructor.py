@@ -1,11 +1,16 @@
-"""mod_constructor.py  v1.9.2
+"""mod_constructor.py  v1.9.3
 Конструктор станции — холст: во главе инвертор; слева поля панелей на его входах MPPT; от инвертора вниз —
 линия к шине АКБ, к этой линии сбоку подключены отдельные MPPT-контроллеры со своими полями; внизу — сборки
 АКБ на шине; справа — дом и сеть. Линии «живые» (зигзаг с бегущими точками), цвет — проверка (✓ ⚠ ✗).
 Клик — выбрать узел (справа его настройки), перетащить мышью — переставить (линии идут следом, место
-запоминается), пунктирные «＋» — добавить, правый клик — меню.
+запоминается); добавить / убрать / копия — правый клик (меню).
 
 Журнал:
+v1.9.3: без пунктирных «＋»-узлов: добавлять — только правым кликом на схеме (поле на вход MPPT, отдельный
+        MPPT, сборка АКБ); подсказка об этом — при наведении на пустое место. Линии: вход — напротив своего
+        блока (прямо, без лишних колен), порядок дорожек — как у блоков (не перекрещиваются); отдельные MPPT —
+        к линии АКБ каждый своей точкой (сверху — спуском вниз, ближний выше), не сквозь соседний прибор;
+        неперемещённые АКБ — нижним рядом под всеми блоками; подписи кабелей, шины и входов MPPT не налезают.
 v1.9.2: линии — как в Smart_BMS: сторона входа по зазору между краями карточек (поле выше инвертора — сверху),
         у каждой линии своя дорожка (±14 px), из двух колен — то, что не режет чужие узлы, середина колена
         отходит от чужих карточек; входы MPPT отмечены там, где входит линия поля (нет такого входа — красным);
@@ -62,6 +67,7 @@ class StationCanvas(QWidget):
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._menu)
         self.setMinimumSize(640, 560)
+        self.setToolTip("Правый клик — добавить: поле на вход MPPT инвертора, отдельный MPPT, сборку АКБ")
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(110)
@@ -228,15 +234,13 @@ class StationCanvas(QWidget):
         y0 = 14
         R = {}
         A, B = d["a"], d["b"]
-        nA = len(A) + (1 if d.get("add_a") else 0)
+        nA = len(A)
         stack_h = max(1, nA) * (CH_F + 14) - 14
         R["inv"] = QRectF(x2, y0 + max(0, (stack_h - CH_I) / 2), CW, CH_I)
         R["house"] = QRectF(x3, y0, CW, CH_H)
         R["grid"] = QRectF(x3, y0 + CH_H + 16, CW, CH_H)
         for i, f in enumerate(A):
             R["field:" + f["key"]] = QRectF(x0, y0 + i * (CH_F + 14), CW, CH_F)
-        if d.get("add_a"):
-            R["add_pv"] = QRectF(x0, y0 + len(A) * (CH_F + 14), CW, 74)
 
         top_bottom = max(y0 + stack_h, R["inv"].bottom(), R["grid"].bottom())
         yb0 = top_bottom + 30
@@ -244,23 +248,24 @@ class StationCanvas(QWidget):
             rf = QRectF(x0, yb0 + j * (CH_F + 14), CW, CH_F)
             R["field:" + b["key"]] = rf
             R["ctl:" + b["key"]] = QRectF(x1, rf.center().y() - CH_C / 2, CW, CH_C)
-        if d.get("add_b"):
-            R["add_ctl"] = QRectF(x1, yb0 + len(B) * (CH_F + 14) + (CH_F - 80) / 2, CW, 80)
-        nB = len(B) + (1 if d.get("add_b") else 0)
-        y_bus = yb0 + nB * (CH_F + 14) + 24
-        nb = len(d["bats"]) + (1 if d.get("add_bat") else 0)
+        y_bus = yb0 + len(B) * (CH_F + 14) + 24
+
+        def place(keys):                                       # переставленные мышью — на своё место
+            for k in keys:
+                if k in self.pos:
+                    x, y = self.pos[k]
+                    r = R[k]
+                    r.moveTo(min(max(0.0, float(x)), max(0.0, W - r.width())), max(0.0, float(y)))
+        place(list(R))
+        # сборки АКБ — нижним рядом под всеми узлами (и под переставленными тоже)
+        y_bus = max(y_bus, max(r.bottom() for r in R.values()) + 24)
+        nb = len(d["bats"])
         per_row = max(1, int((W - 2 * M + 14) // (CW + 14)))
         for j in range(nb):
             rr, cc = divmod(j, per_row)
             x, y = M + cc * (CW + 14), y_bus + 26 + rr * (CH_B + 30)
-            if j < len(d["bats"]):
-                R[f"bat:{j}"] = QRectF(x, y, CW, CH_B)
-            else:
-                R["add_bat"] = QRectF(x, y + 12, min(CW, 120), CH_B - 24)
-        for k, r in R.items():                                 # переставленные мышью — на своё место
-            if k in self.pos:
-                x, y = self.pos[k]
-                r.moveTo(min(max(0.0, float(x)), max(0.0, W - r.width())), max(0.0, float(y)))
+            R[f"bat:{j}"] = QRectF(x, y, CW, CH_B)
+        place([f"bat:{j}" for j in range(nb)])
         return R
 
     # ── линии (как в Smart_BMS): сторона входа — по зазору между краями карточек, у каждой линии своя дорожка,
@@ -379,27 +384,40 @@ class StationCanvas(QWidget):
         return "l" if x0 < x1 else "r"
 
     @staticmethod
-    def _lanes(entries, skip0=(), step=14.0):
-        """Дорожки: линии в одну сторону приёмника разносятся на step px по порядку источников (выше / левее —
-        ближе к началу стороны), так они не перекрещиваются; skip0 — стороны, где середина занята (низ инвертора —
-        линия к АКБ): там левые — левее середины, правые — правее."""
+    def _lanes(entries, half, skip0=(), step=14.0):
+        """Дорожки входа (сдвиг от середины стороны): линия входит напротив своего источника (прямо, без
+        колен), если он стоит напротив стороны; иначе — у ближнего края. Порядок — как у источников (выше /
+        левее — раньше), между дорожками не меньше step: линии не сливаются и не перекрещиваются.
+        half — полудлина стороны; skip0 — стороны, где середина занята (низ инвертора — линия к АКБ)."""
         by, out = {}, {}
         for i, (key, side, coord) in enumerate(entries):
             by.setdefault(side, []).append((coord, i, key))
         for side, lst in by.items():
             lst.sort()
-            if side in skip0:
-                neg = [k for c, i, k in lst if c < 0]
-                pos = [k for c, i, k in lst if c >= 0]
-                for j, k in enumerate(reversed(neg)):
-                    out[k] = -step * (j + 1)
-                for j, k in enumerate(pos):
-                    out[k] = step * (j + 1)
-            else:
-                n = len(lst)
-                for j, (c, i, k) in enumerate(lst):
-                    out[k] = (j - (n - 1) / 2) * step
+            L = half.get(side, 60.0)
+            offs = [min(max(c, -L), L) for c, i, k in lst]
+            if side in skip0:                                       # мимо середины (там линия к АКБ)
+                offs = [(o if abs(o) >= 16 else (16.0 if c >= 0 else -16.0)) for o, (c, i, k) in zip(offs, lst)]
+            for j in range(1, len(offs)):                           # не ближе step друг к другу
+                offs[j] = max(offs[j], offs[j - 1] + step)
+            if offs and offs[-1] > L:                               # вылезли за край — сдвинуть назад
+                offs[-1] = L
+                for j in range(len(offs) - 2, -1, -1):
+                    offs[j] = min(offs[j], offs[j + 1] - step)
+            for o, (c, i, k) in zip(offs, lst):
+                out[k] = o
         return out
+
+    @staticmethod
+    def _port_rect(font, x, y, side, off, n, bad):
+        """Подпись входа MPPT n и её место: снаружи инвертора, над линией; сверху / снизу — в сторону своей
+        дорожки. → (QRectF, текст)."""
+        text = f"MPPT {n + 1}" + (" ✗ нет входа" if bad else "")
+        tw = QFontMetrics(font).horizontalAdvance(text) + 4
+        xa = x - tw - 6 if off < 0 else x + 6
+        rr = {"l": QRectF(x - tw - 6, y - 17, tw, 13), "r": QRectF(x + 6, y - 17, tw, 13),
+              "t": QRectF(xa, y - 17, tw, 13), "b": QRectF(xa, y + 4, tw, 13)}[side]
+        return rr, text
 
     def _label_at(self, p, pts, text, col, kind, idx, nodes=()):
         """Подпись кабеля — туда, где её не закроет узел и другая подпись: сначала первый отрезок (если длинный),
@@ -409,7 +427,7 @@ class StationCanvas(QWidget):
         order = sorted(segs, key=lambda s: (-(ln(s) >= 90 and s is segs[0]), -ln(s)))
         opts = []
         for (x0, y0), (x1, y1) in order:
-            if ln(((x0, y0), (x1, y1))) < 30:
+            if ln(((x0, y0), (x1, y1))) < 30 and len(segs) > 1:
                 continue
             for t in (0.5, 0.3, 0.7, 0.15, 0.85):                  # по отрезку: середина, ближе к краям
                 if abs(y1 - y0) < 1:
@@ -465,8 +483,9 @@ class StationCanvas(QWidget):
             c, ic = r.center(), inv.center()
             ent.append((key, side, (c.x() - ic.x()) if side in ("t", "b") else (c.y() - ic.y())))
             axes[key] = ("v" if side in ("t", "b") else "h", top and side == "t", side)
-        lane = self._lanes(ent, skip0=("b",), step=22.0)
-        ports = []                                                  # (точка входа, сторона, № входа, цвет, дорожка)
+        hw, hh = inv.width() / 2 - 14, inv.height() / 2 - 14
+        lane = self._lanes(ent, {"t": hw, "b": hw, "l": hh, "r": hh}, skip0=("b",), step=22.0)
+        ports, cab = [], []                                         # входы MPPT: (точка, сторона, №, цвет, дорожка)
         for f in A:
             r = R["field:" + f["key"]]
             for q in range(f["k"]):
@@ -477,8 +496,15 @@ class StationCanvas(QWidget):
                 pts = self._route(r, inv, lane[key], others(r, inv), ax, top)
                 self._zig(p, pts, col)
                 if q == 0:
-                    self._label_at(p, pts, f["cable"], col, "cable_pv", f["idx"], nodes)
+                    cab.append((pts, f["cable"], col, f["idx"]))
                 ports.append((pts[-1], self._end_side(pts), n, col, lane[key]))
+        pfont = QFont(self.font())
+        pfont.setPointSizeF(max(6.5, pfont.pointSizeF() - 2.2))
+        pfont.setBold(True)
+        prects = [self._port_rect(pfont, x, y, side, off, n, n >= max(1, nports)) for (x, y), side, n, col, off in ports]
+        self.placed += [r for r, t in prects]                       # подписи входов — место занято заранее
+        for pts, text, col, idx in cab:
+            self._label_at(p, pts, text, col, "cable_pv", idx, nodes)
         hs, gr = d["house"], d["grid"]
         on = gr.get("on", True)
         pts = self._route(R["house"], inv, lane["house"], others(R["house"], inv), axes["house"][0])
@@ -492,89 +518,90 @@ class StationCanvas(QWidget):
         y_bus = (min(r.top() for r in brs) - 26) if brs else inv.bottom() + 60
         t0, t1 = sorted((inv.bottom(), y_bus))
 
-        def trunk_y(y):
-            return min(max(y, t0 + 10), t1)
         bus = d["bus"]
         bus_col = LVL.get(bus["lvl"], C_BUS) if bus["lvl"] != "ok" else C_BUS
         y_from = inv.bottom() if y_bus >= inv.bottom() else inv.top()
         self._zig(p, [(xv, y_from), (xv, y_bus)], bus_col, 3.2, amp=4, flow=-1)
-        # ── отдельные MPPT (приборы) — к линии «АКБ → инвертор» ──
-        for b in B:
+        # ── отдельные MPPT (приборы) — к линии «АКБ → инвертор»: у каждого своя точка на линии (дорожка) ──
+        for b in B:                                                 # поле → свой контроллер
             rf, rc = R["field:" + b["key"]], R["ctl:" + b["key"]]
-            col = LVL.get(b["lvl"], C_GRID)
             ax, side = self._entry(rf, rc)
             pts = self._route(rf, rc, 0, others(rf, rc), ax, top=rf.bottom() < rc.top() - 6)
-            self._zig(p, pts, col)
-            if rc.left() - 8 <= xv <= rc.right() + 8 and t0 <= rc.center().y() <= t1:   # стоит прямо на линии
-                self._label(p, rc.center().x(), rc.bottom() + 12, b["cable2"], C_BUS, "cable_ctl", b["idx"])
+            self._zig(p, pts, LVL.get(b["lvl"], C_GRID))
+        on_line, above, below, beside = [], [], [], []
+        for b in B:
+            rc = R["ctl:" + b["key"]]
+            cy = rc.center().y()
+            if rc.left() - 8 <= xv <= rc.right() + 8 and t0 <= cy <= t1:
+                on_line.append(b)                                   # стоит прямо на линии — без отвода
+            elif cy < t0 + 12:
+                above.append((abs(rc.center().x() - xv), cy, b))
+            elif cy > t1 - 12:
+                below.append((abs(rc.center().x() - xv), cy, b))
+            else:
+                beside.append((cy, b))
+        tys = {}
+        for i, (dist, cy, b) in enumerate(sorted(above, key=lambda t: t[:2])):   # ближний — выше, дальний — ниже
+            tys[b["key"]] = ("v", min(t1, t0 + 12 + 14 * i))
+        for i, (dist, cy, b) in enumerate(sorted(below, key=lambda t: t[:2])):   # ближний — ниже, дальний — выше
+            tys[b["key"]] = ("v", max(t0, t1 - 12 - 14 * i))
+        last = -1e9
+        for cy, b in sorted(beside, key=lambda t: t[0]):            # сбоку — прямо на своей высоте, не ближе 14 px
+            ty = max(cy, last + 14)
+            tys[b["key"]] = ("h", min(ty, t1))
+            last = ty
+        for b in on_line:
+            rc = R["ctl:" + b["key"]]
+            self._label(p, rc.center().x(), rc.bottom() + 12, b["cable2"], C_BUS, "cable_ctl", b["idx"])
+        for b in B:
+            if b["key"] not in tys:
                 continue
-            cx = rc.right() if rc.center().x() <= xv else rc.left()
-            ty = trunk_y(rc.center().y())
-            pts = self._simplify([(cx, rc.center().y()), ((cx + xv) / 2, rc.center().y()), ((cx + xv) / 2, ty), (xv, ty)])
+            rc = R["ctl:" + b["key"]]
+            pref, ty = tys[b["key"]]
+            boxes = others(rc)
+            cx, cy = rc.center().x(), rc.center().y()
+            ex = rc.right() if cx <= xv else rc.left()
+            mx = self._clear_v((ex + xv) / 2, cy, ty, boxes)
+            cand_h = self._simplify([(ex, cy), (mx, cy), (mx, ty), (xv, ty)])
+            ey = rc.bottom() if ty > cy else rc.top()
+            cand_v = self._simplify([(cx, ey), (cx, ty), (xv, ty)]) if not (rc.left() <= xv <= rc.right()) else cand_h
+            pts = min(((cand_h, 0 if pref == "h" else 1), (cand_v, 0 if pref == "v" else 1)),
+                      key=lambda c: (self._cross(c[0], boxes), c[1], self._plen(c[0])))[0]
             self._zig(p, pts, C_BUS, 2.4, flow=1)
-            self._label(p, (cx + (pts[1][0] if len(pts) > 2 else xv)) / 2, rc.center().y() - 14, b["cable2"], C_BUS,
-                        "cable_ctl", b["idx"])
-        if "add_ctl" in R:
-            r = R["add_ctl"]
-            cx = r.right() if r.center().x() <= xv else r.left()
-            ty = trunk_y(r.center().y())
-            self._zig(p, self._simplify([(cx, r.center().y()), ((cx + xv) / 2, r.center().y()), ((cx + xv) / 2, ty), (xv, ty)]),
-                      C_GRID, 1.2, dots=False, dashed=True)
-        ly = inv.bottom() + 16 if B else (inv.bottom() + y_bus) / 2
-        if not B and y_bus - inv.bottom() < 56:                    # линия короткая — подпись левее, не на шине
-            self._label(p, xv - 8, ly, bus["text"], LVL.get(bus["lvl"], C_BUS), "cable_bus", 0, right=True)
-        else:
-            self._label(p, xv + 8, ly, bus["text"], LVL.get(bus["lvl"], C_BUS), "cable_bus", 0, left=True)
+            self._label_at(p, pts, b["cable2"], C_BUS, "cable_ctl", b["idx"], nodes)
+        self._label_at(p, [(xv, y_from), (xv, y_bus)], bus["text"], LVL.get(bus["lvl"], C_BUS), "cable_bus", 0, nodes)
         # ── шина и сборки АКБ ──
         if brs:
             xs = [r.center().x() for r in brs] + [xv]
             p.setPen(QPen(QColor(C_BUS), 3.2, Qt.SolidLine, Qt.RoundCap))
             p.drawLine(QPointF(min(xs), y_bus), QPointF(max(xs), y_bus))
-            self._label(p, max(xs) + 8, y_bus - 12, d.get("bus_v", ""), C_BUS, left=True)
+            self._label_at(p, [(max(xs), y_bus), (min(xs), y_bus)], d.get("bus_v", ""), C_BUS, None, 0, nodes)
         for j, r in enumerate(brs):
             self._zig(p, [(r.center().x(), y_bus), (r.center().x(), r.top())], C_BUS, 2.0, amp=3, flow=1)
         # ── узлы поверх линий ──
         for f in A:
             self._node(p, R["field:" + f["key"]], "☀", f["big"], f["lines"], C_PV, "field", f["idx"], f.get("tip", ""),
                        big_col=pv_col, key="field:" + f["key"])
-        if "add_pv" in R:
-            self._node(p, R["add_pv"], "＋", d["add_a"], ["свободный вход MPPT"], C_GRID, "add_pv", 0,
-                       "Подключить поле на свободный вход MPPT инвертора", dashed=True, key="add_pv")
         for b in B:
             self._node(p, R["field:" + b["key"]], "☀", b["big"], b["lines"], C_PV, "field", b["idx"], b.get("tip", ""),
                        big_col=pv_col, key="field:" + b["key"])
             ct = b["ctl"]
             self._node(p, R["ctl:" + b["key"]], "🔀", ct["big"], ct["lines"], C_CTL, "ctl", b["idx"], ct.get("tip", ""),
                        key="ctl:" + b["key"])
-        if "add_ctl" in R:
-            self._node(p, R["add_ctl"], "＋", d["add_b"], ["прибор на линии АКБ"], C_GRID, "add_ctl", 0,
-                       "Отдельный MPPT-контроллер (прибор) со своим полем — на линию АКБ", dashed=True, key="add_ctl")
         for j, b in enumerate(bats):
             self._node(p, brs[j], "🔋", b["big"], b["lines"], C_BAT, "bat", j, b.get("tip", ""),
                        big_col="#9fd4ff" if self.dark else "#1f6fa8", key=f"bat:{j}")
-        if "add_bat" in R:
-            self._node(p, R["add_bat"], "＋", "АКБ", ["ещё сборка"], C_GRID, "add_bat", 0,
-                       "Другая сборка АКБ на ту же шину", dashed=True, key="add_bat")
         self._node(p, R["house"], "🏠", hs["big"], hs["lines"], C_HOUSE, "house", 0, hs.get("tip", ""), key="house")
         self._node(p, R["grid"], "🔌", gr["big"], gr["lines"], C_GRID, "grid", 0, gr.get("tip", ""), key="grid")
         self._node(p, inv, "⚡", iv["big"], iv["lines"], C_INV, "inv", 0, iv.get("tip", ""),
                    badge="MPPT" if iv["builtin"] else None, key="inv")
         # ── входы MPPT — там, где в инвертор входит линия поля ──
-        f = QFont(self.font())
-        f.setPointSizeF(max(6.5, f.pointSizeF() - 2.2))
-        f.setBold(True)
-        p.setFont(f)
-        for (x, y), side, n, col, off in ports:
-            bad = n >= max(1, nports)
-            c = QColor(_ERR if bad else col)
+        p.setFont(pfont)
+        for ((x, y), side, n, col, off), (rr, text) in zip(ports, prects):
+            c = QColor(_ERR if n >= max(1, nports) else col)
             p.setPen(QPen(c, 1.6))
             p.setBrush(c)
             p.drawEllipse(QPointF(x, y), 4, 4)
-            text = f"MPPT {n + 1}" + (" ✗ нет входа" if bad else "")
-            tw = QFontMetrics(f).horizontalAdvance(text) + 4
-            xa = x - tw - 6 if off < 0 else x + 6                    # сверху/снизу — в сторону своей дорожки
-            rr = {"l": QRectF(x - tw - 6, y - 17, tw, 13), "r": QRectF(x + 6, y - 17, tw, 13),
-                  "t": QRectF(xa, y - 17, tw, 13), "b": QRectF(xa, y + 4, tw, 13)}[side]
             p.setPen(c)
             p.drawText(rr, Qt.AlignCenter, text)
         h = int(max(r.bottom() for r in R.values()) + 16)
@@ -608,15 +635,16 @@ class StationCanvas(QWidget):
             return
         h = self._hit(pt)
         new = (h[0], h[1]) if h else None
+        left_node = new != self.hover and new is None
         if new != self.hover:
             self.hover = new
             self.update()
         self.setCursor((Qt.OpenHandCursor if h[3] else Qt.PointingHandCursor) if h else Qt.ArrowCursor)
         if h and h[2]:
-            tip = h[2] + ("\nПеретащите мышью — переставить" if h[3] and not h[0].startswith("add_") else "")
+            tip = h[2] + ("\nПеретащите мышью — переставить · правый клик — меню" if h[3] else "")
             QToolTip.showText(e.globalPosition().toPoint(), tip, self)
-        else:
-            QToolTip.hideText()
+        elif left_node:
+            QToolTip.hideText()                                   # пустое место — своя подсказка холста (правый клик)
 
     def leaveEvent(self, e):
         self.hover = None
