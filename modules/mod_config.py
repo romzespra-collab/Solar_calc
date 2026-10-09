@@ -1,7 +1,11 @@
-"""mod_config.py  v1.9.4
+"""mod_config.py  v1.9.5
 параметры станции по умолчанию, config.json: загрузка, проверка, сохранение
 
 Журнал:
+v1.9.5: станция по умолчанию — станция пользователя: Краматорск, 15° юг; Axioma ISMPPT BFP 11000 (2 MPPT);
+        2 поля по 9 × Risen RSM120-8-565BMDG (9S) на MPPT 1 и 2; отдельный MPPT 60 А / 150 В с 3 × Risen
+        RSM110-8-525BMDG (3S); АКБ EVE LF105 16S × 4; кабели 6 мм² 20 м, контроллер 25 мм² 1.5 м, АКБ 35 мм² 1.5 м;
+        дом 1000 кВт·ч/мес, горсети нет.
 v1.9.4: cfg["region"] — погода региона за 5 лет (проверка структуры, повреждённое — сброс).
 v1.9.3: места «＋»-узлов (add_*) больше не хранятся — этих узлов нет.
 v1.9.2: mppt_mode — «есть свои MPPT» / «нет MPPT» (только для своего инвертора; у гибрида из базы — всегда свои).
@@ -52,23 +56,20 @@ def _field_item(it, s, ctl=False):
     return out
 
 
-DEFAULT_SYS = dict(
-    place="Киев", lat=50.45, lon=30.52, tilt=15, aspect=0, horizon=5, tz=2, dst=True,
-    month=11, weather="over", overcast_k=35,
-    p_preset="p670", pmax=670, vmp=38.3, imp=17.5, voc=45.9, isc=18.6, gamma=-0.34, bvoc=-0.26,
-    noct=45, lowlight=97,
-    n_pan=6, n_in=1, ns=2, np=3, mismatch=2, soiling=2, calib=100,
-    wire_len=15, wire_s=16, wire_mat="al", contact="norm", n_main=6,
-    m_preset="cn60", v_max=150, vmpp_min=0, vmpp_max=145, iin_max=0, iout_max=60, eta=96, eta_k=3,
-    own_w=4, headroom=3, mppt_mode="separate", n_mppt_max=1, pv_pmax=0,
-    wire_mode="s", bw_len=1.5, bw_s=25, bw_mat="cu", iw_len=1.5, iw_s=35, iw_mat="cu",
-    bat_preset="eve_lf280k", bat_v="48", chem="lfp", bat_unit_v=3.2, bat_ah=280, bat_packs=1, bat_extra=[], pv_extra=[], ctl_extra=[], cons_pos={}, bat_dod=90,
-    bat_c=0.5, t_bat=15, bat_ch=56.8, eta_bat=97,
-    inv_preset="hyb5", inv_p=6000, inv_eta=92, inv_idle=50, inv_hours=24, inv_bat_v=48,
-    load_mode="m", load_kwh=250, load_winter=30, night_share=50, load_profile="typ",
-    grid_mode="backup", back_soc=40, tariff=4.32, ser_days=4, ser_weather="over", ser_soc0=100,
-    t_min=-25, t_max=35, pt_g=100, pt_t=0, fc_soc0=70,
-)
+DEFAULT_SYS = dict(                                     # по умолчанию — станция пользователя (Краматорск)
+    place='Краматорск', lat=48.72, lon=37.56, tilt=15, aspect=0, horizon=5.0, tz=2, dst=True, month=11,
+    weather='over', overcast_k=35.0, p_preset='risen_rsm1208565bmdg', pmax=565.0, vmp=33.45, imp=16.9, voc=40.22,
+    isc=17.9, gamma=-0.323, bvoc=-0.218, noct=45.1, lowlight=97.0, n_pan=9, n_in=1, ns=9, np=1, mismatch=2.0,
+    soiling=2.0, calib=100.0, wire_len=20, wire_s=6, wire_mat='cu', contact='norm', n_main=6, m_preset='cn60',
+    v_max=500, vmpp_min=90, vmpp_max=450, iin_max=18, iout_max=150, eta=97, eta_k=0, own_w=0, headroom=0,
+    mppt_mode='builtin', n_mppt_max=2, pv_pmax=11000, wire_mode='s', bw_len=1.5, bw_s=25, bw_mat='cu', iw_len=1.5,
+    iw_s=35, iw_mat='cu', bat_preset='eve_lf105', bat_v='48', chem='lfp', bat_unit_v=3.2, bat_ah=105, bat_packs=4,
+    bat_extra=[], pv_extra=[{'preset': 'risen_rsm1208565bmdg', 'ns': 9, 'np': 1, 'tilt': 15.0, 'aspect': 0.0}],
+    ctl_extra=[{'mppt': 'cn60', 'preset': 'risen_rsm1108525bmdg', 'ns': 3, 'np': 1, 'tilt': 15.0, 'aspect': 0.0}],
+    cons_pos={}, bat_dod=90, bat_c=0.5, t_bat=15.0, bat_ch=56.8, eta_bat=97, inv_preset='axioma_ismpptbfp11000',
+    inv_p=11000, inv_eta=91, inv_idle=75, inv_hours=24, inv_bat_v=48, load_mode='m', load_kwh=1000,
+    load_winter=30.0, night_share=50, load_profile='typ', grid_mode='off', back_soc=40.0, tariff=4.32,
+    ser_days=4.0, ser_weather='over', ser_soc0=100.0, t_min=-25.0, t_max=35.0, pt_g=100.0, pt_t=0.0, fc_soc0=70.0)
 
 
 DEFAULT_CONFIG = {"theme": "dark", "geometry": "", "sys": dict(DEFAULT_SYS),
