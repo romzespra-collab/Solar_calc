@@ -18,7 +18,7 @@ a = Analysis(
                    'modules.mod_checks', 'modules.mod_pvgis', 'modules.mod_theme', 'modules.mod_widgets',
                    'modules.mod_page_settings', 'modules.mod_page_results', 'modules.mod_page_tools',
                    'modules.mod_astro', 'modules.mod_stars', 'modules.mod_weather', 'modules.mod_forecast',
-                   'modules.mod_wx_draw', 'modules.mod_sky', 'modules.mod_page_sky'],
+                   'modules.mod_wx_draw', 'modules.mod_sky', 'modules.mod_page_sky', 'modules.mod_scheme'],
     hookspath=[],
     runtime_hooks=[],
     excludes=['PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngine',

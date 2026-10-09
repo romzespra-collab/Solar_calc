@@ -265,6 +265,8 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
             c.set_theme(p)
         if hasattr(self, "wxpane"):
             self.wxpane.update()
+        if hasattr(self, "scheme"):
+            self.scheme.set_data(self._scheme_data(), p)
 
     def _log_card(self):
         fr, v = _card("Лог")
