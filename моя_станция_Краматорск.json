@@ -1,10 +1,10 @@
 {
-  "solar_calc": "1.9.5",
+  "solar_calc": "1.9.6",
   "sys": {
     "place": "Краматорск",
     "lat": 48.72,
     "lon": 37.56,
-    "tilt": 15,
+    "tilt": 20,
     "aspect": 0,
     "horizon": 5.0,
     "tz": 2,
@@ -66,7 +66,7 @@
         "preset": "risen_rsm1208565bmdg",
         "ns": 9,
         "np": 1,
-        "tilt": 15.0,
+        "tilt": 20.0,
         "aspect": 0.0
       }
     ],

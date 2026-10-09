@@ -1,7 +1,8 @@
-"""mod_config.py  v1.9.5
+"""mod_config.py  v1.9.6
 параметры станции по умолчанию, config.json: загрузка, проверка, сохранение
 
 Журнал:
+v1.9.6: по умолчанию поля 1 и 2 (на MPPT инвертора) — 20°, точно на юг.
 v1.9.5: станция по умолчанию — станция пользователя: Краматорск, 15° юг; Axioma ISMPPT BFP 11000 (2 MPPT);
         2 поля по 9 × Risen RSM120-8-565BMDG (9S) на MPPT 1 и 2; отдельный MPPT 60 А / 150 В с 3 × Risen
         RSM110-8-525BMDG (3S); АКБ EVE LF105 16S × 4; кабели 6 мм² 20 м, контроллер 25 мм² 1.5 м, АКБ 35 мм² 1.5 м;
@@ -57,14 +58,14 @@ def _field_item(it, s, ctl=False):
 
 
 DEFAULT_SYS = dict(                                     # по умолчанию — станция пользователя (Краматорск)
-    place='Краматорск', lat=48.72, lon=37.56, tilt=15, aspect=0, horizon=5.0, tz=2, dst=True, month=11,
+    place='Краматорск', lat=48.72, lon=37.56, tilt=20, aspect=0, horizon=5.0, tz=2, dst=True, month=11,
     weather='over', overcast_k=35.0, p_preset='risen_rsm1208565bmdg', pmax=565.0, vmp=33.45, imp=16.9, voc=40.22,
     isc=17.9, gamma=-0.323, bvoc=-0.218, noct=45.1, lowlight=97.0, n_pan=9, n_in=1, ns=9, np=1, mismatch=2.0,
     soiling=2.0, calib=100.0, wire_len=20, wire_s=6, wire_mat='cu', contact='norm', n_main=6, m_preset='cn60',
     v_max=500, vmpp_min=90, vmpp_max=450, iin_max=18, iout_max=150, eta=97, eta_k=0, own_w=0, headroom=0,
     mppt_mode='builtin', n_mppt_max=2, pv_pmax=11000, wire_mode='s', bw_len=1.5, bw_s=25, bw_mat='cu', iw_len=1.5,
     iw_s=35, iw_mat='cu', bat_preset='eve_lf105', bat_v='48', chem='lfp', bat_unit_v=3.2, bat_ah=105, bat_packs=4,
-    bat_extra=[], pv_extra=[{'preset': 'risen_rsm1208565bmdg', 'ns': 9, 'np': 1, 'tilt': 15.0, 'aspect': 0.0}],
+    bat_extra=[], pv_extra=[{'preset': 'risen_rsm1208565bmdg', 'ns': 9, 'np': 1, 'tilt': 20.0, 'aspect': 0.0}],
     ctl_extra=[{'mppt': 'cn60', 'preset': 'risen_rsm1108525bmdg', 'ns': 3, 'np': 1, 'tilt': 15.0, 'aspect': 0.0}],
     cons_pos={}, bat_dod=90, bat_c=0.5, t_bat=15.0, bat_ch=56.8, eta_bat=97, inv_preset='axioma_ismpptbfp11000',
     inv_p=11000, inv_eta=91, inv_idle=75, inv_hours=24, inv_bat_v=48, load_mode='m', load_kwh=1000,
