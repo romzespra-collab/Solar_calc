@@ -1,4 +1,4 @@
-"""mod_panels.py  v1.9.13
+"""mod_panels.py  v1.9.14
 База солнечных панелей: паспорт STC + температурные коэффициенты, «производитель → серия → мощность».
 Полная база — panels_db.tsv.gz рядом (CEC/NREL SAM 2026.7.3 — 21 тыс. моделей, 250+ производителей,
 + паспорта популярных серий, которых в CEC нет). Ниже — ручные паспорта (сверены с datasheet), они главнее
@@ -6,6 +6,10 @@
 «≈ не проверено» в описании — значения из каталога, не из паспорта.
 
 Журнал:
+v1.9.14: Trina Vertex N TSM-NEG21C.20 700–725 W — по паспорту 2025: γ −0.29 (у 700 было −0.30), NOCT 43°C
+        (у 705–720 было 45), 725 — из паспорта (было CEC); слабый свет 99% (по таблице NOCT), и у 695.
+        Серии, что отличаются только пробелом / точкой / дефисом / регистром, — одна серия в выборе (было 22
+        дубля: Trina NEG21C.20 / NEG19RC.20, Q CELLS, Silfab, Runergy, Heliene…).
 v1.9.13: + Risen RSM132-11-605…630BNDG (n-type TOPCon, 132 полуячейки, двусторонняя) по паспорту.
 v1.9.12: + LONGi Hi-MO X10 Scientist LR7-72HVD-640…665M (BC) по паспорту; Jinko 72HL4-BDV сверены с паспортом
         575–600 W: 595N / 600N — коэффициенты паспорта (были CEC), вес 31 кг (было 32).
@@ -196,9 +200,21 @@ _CURATED = [
      "132 полуячеек N-type i-TOPCon (210R) · двусторонняя · 2382×1134×30 мм · 33 кг · NOCT 43°C · паспорт ✓"),
     ("trina_tsm620neg19rc20", "Trina", "620 Вт · TSM-620NEG19RC.20 (Vertex N NEG19RC.20)", _p(620, 41.4, 14.99, 49.6, 15.91, -0.29, -0.24, 43, 97.5),
      "132 полуячеек N-type i-TOPCon (210R) · двусторонняя · 2382×1134×30 мм · 33 кг · NOCT 43°C · паспорт ✓"),
-    ("trina_tsm695neg21c20", "Trina", "695 Вт · TSM-695NEG21C.20 (Vertex N NEG21C.20)", _p(695, 40.3, 17.25, 48.3, 18.28, -0.3, -0.24, 43, 97.5),
+    ("trina_tsm695neg21c20", "Trina", "695 Вт · TSM-695NEG21C.20 (Vertex N NEG21C.20)", _p(695, 40.3, 17.25, 48.3, 18.28, -0.3, -0.24, 43, 99),
      "132 полуячеек N-type i-TOPCon (G12) · двусторонняя · 2384×1303×33 мм · 38.3 кг · NOCT 43°C · паспорт ✓"),
-    ("trina_tsm700neg21c20", "Trina", "700 Вт · TSM-700NEG21C.20 (Vertex N NEG21C.20)", _p(700, 40.5, 17.29, 48.6, 18.32, -0.3, -0.24, 43, 97.5),
+    # v1.9.14: 700–725 — по паспорту TSM_APAC_EN_2025_B: γ −0.29, βVoc −0.24, NOCT 43°C; слабый свет 99% — по
+    #          таблице NOCT (700 Вт → 534 Вт при 800 Вт/м², 20°C)
+    ("trina_tsm700neg21c20", "Trina", "700 Вт · TSM-700NEG21C.20 (Vertex N NEG21C.20)", _p(700, 40.5, 17.29, 48.6, 18.32, -0.29, -0.24, 43, 99),
+     "132 полуячеек N-type i-TOPCon (G12) · двусторонняя · 2384×1303×33 мм · 38.3 кг · NOCT 43°C · паспорт ✓"),
+    ("trina_tsm705neg21c20", "Trina", "705 Вт · TSM-705NEG21C.20 (Vertex N NEG21C.20)", _p(705, 40.7, 17.33, 48.8, 18.36, -0.29, -0.24, 43, 99),
+     "132 полуячеек N-type i-TOPCon (G12) · двусторонняя · 2384×1303×33 мм · 38.3 кг · NOCT 43°C · паспорт ✓"),
+    ("trina_tsm710neg21c20", "Trina", "710 Вт · TSM-710NEG21C.20 (Vertex N NEG21C.20)", _p(710, 40.9, 17.36, 49.0, 18.4, -0.29, -0.24, 43, 99),
+     "132 полуячеек N-type i-TOPCon (G12) · двусторонняя · 2384×1303×33 мм · 38.3 кг · NOCT 43°C · паспорт ✓"),
+    ("trina_tsm715neg21c20", "Trina", "715 Вт · TSM-715NEG21C.20 (Vertex N NEG21C.20)", _p(715, 41.1, 17.4, 49.2, 18.44, -0.29, -0.24, 43, 99),
+     "132 полуячеек N-type i-TOPCon (G12) · двусторонняя · 2384×1303×33 мм · 38.3 кг · NOCT 43°C · паспорт ✓"),
+    ("trina_tsm720neg21c20", "Trina", "720 Вт · TSM-720NEG21C.20 (Vertex N NEG21C.20)", _p(720, 41.3, 17.44, 49.4, 18.49, -0.29, -0.24, 43, 99),
+     "132 полуячеек N-type i-TOPCon (G12) · двусторонняя · 2384×1303×33 мм · 38.3 кг · NOCT 43°C · паспорт ✓"),
+    ("trina_tsm725neg21c20", "Trina", "725 Вт · TSM-725NEG21C.20 (Vertex N NEG21C.20)", _p(725, 41.5, 17.47, 49.6, 18.54, -0.29, -0.24, 43, 99),
      "132 полуячеек N-type i-TOPCon (G12) · двусторонняя · 2384×1303×33 мм · 38.3 кг · NOCT 43°C · паспорт ✓"),
     ("canadiansolar_cs6k275p", "Canadian Solar", "275 Вт · CS6K-275P (CS6K-P)", _p(275, 31, 8.88, 38, 9.45, -0.41, -0.31, 45, 96),
      "60 поли 156 mm · 1650×992×40 мм · 18.2 кг · NOCT 45°C · паспорт ✓"),
@@ -388,17 +404,22 @@ def _build():
             recs[key] = [brand, old[1] or fam, old[2], old[3], p, info]
         else:
             recs[key] = [brand, fam, series_of(code, p["pmax"]), code, p, info]
-    # подпись серии: «семейство · шаблон», одна на серию
-    fam_of = {}
+    # подпись серии: «семейство · шаблон», одна на серию; шаблоны, что отличаются только пробелом / точкой /
+    # дефисом / регистром (CEC «TSM-xxxNEG21C20» и паспорт «TSM-xxxNEG21C.20»), — одна серия («+» — другая)
+    nk = lambda brand, ser: (brand, re.sub(r"[\s.\-_]", "", ser.lower()))
+    fam_of, ser_of = {}, {}
     for brand, fam, ser, *_ in recs.values():
-        if fam and (brand, ser) not in fam_of:
-            fam_of[(brand, ser)] = fam
+        bs = nk(brand, ser)
+        if len(ser) > len(ser_of.get(bs, "")):
+            ser_of[bs] = ser                             # подробнее записанный шаблон (с точкой, дефисом)
+        if fam and len(fam) > len(fam_of.get(bs, "")):
+            fam_of[bs] = fam
     labels, nat, rows = {}, {}, []
     for key, (brand, fam, ser, code, p, info) in recs.items():
-        bs = (brand, ser)
+        bs = nk(brand, ser)
         label = labels.get(bs)
         if label is None:
-            f = fam_of.get(bs, "")
+            f, ser = fam_of.get(bs, ""), ser_of[bs]
             label = ser if brand == TYPICAL or not f or _slug(f) in _slug(ser) else f"{f} · {ser}"
             labels[bs] = label
             nat[bs] = _natural(ser)                      # порядок серий — по названию модели, не по семейству
