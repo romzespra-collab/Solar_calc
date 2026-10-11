@@ -1,4 +1,4 @@
-solar_calc  v1.9.15
+solar_calc  v1.9.16
 ══════════════════
 
 Калькулятор выработки солнечной станции с MPPT и АКБ.
@@ -109,7 +109,8 @@ solar_calc  v1.9.15
     AIKO, Tongwei, DAH, Huasun, Sunova, Ulica, Leapton, Abi-Solar, Victron, Axioma + типовые.
     Серия «RSM72-6-xxxP» — xxx = мощность. В описании модели: «паспорт ✓» / «база CEC» — откуда данные;
     «как у …» или «≈ типовые» — температурного коэффициента в паспорте не было.
-  • инверторы — 209: на 12 В — 61, на 24 В — 71, на 48 В — 75 (в т.ч. 11 кВт с 2 MPPT: Axpert MAX II/III/Ultra,
+  • инверторы — 241: на 12 В — 60, на 24 В — 70, на 48 В — 111 (Deye — 50 моделей: однофазные 3–16 кВт, 3K на
+    24 В, автономные OG01LP1, трёхфазные SG04LP3 / SG05LP3 до 20 кВт; 11 кВт с 2 MPPT: Axpert MAX II/III/Ultra,
     Axioma ISMPPT BFP 11000, EASun SMG II/SMW 11K, Must PV19-11048 и др.). Выбор: производитель → напряжение АКБ
     (с MPPT — гибрид / без MPPT) → модель. Гибриды: Deye, Must PV18, Axioma ISMPPT, Voltronic Axpert, EASun,
     PowMr, SRNE, Growatt SPF, Felicity, Anern, Luxpower, Solis, Sofar, Victron EasySolar, LogicPower,
