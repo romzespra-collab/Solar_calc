@@ -3,7 +3,7 @@
 
 Журнал:
 v1.10.0: вкладки (QTabWidget/QTabBar — подчёркивание цветом акцента), галочки в списках и таблицах (видны в
-         обеих темах: рамка, заливка акцентом и белая галочка).
+         обеих темах: рамка, заливка акцентом и белая галочка), раскрывающиеся группы настроек (accHead).
 v1.9.4: цвет графиков для погоды «Регион 5 лет».
 v1.9.2: боковая панель конструктора — фон темнее, поля ввода светлее и с рамкой (различимы в обеих темах).
 v1.9.0: конструктор станции — кнопки шагов (цвет по проверке), боковая панель настроек узла.
@@ -158,6 +158,14 @@ QAbstractItemView::indicator, QCheckBox::indicator {{ width: 15px; height: 15px;
 QAbstractItemView::indicator:hover, QCheckBox::indicator:hover {{ border-color: {p['accent']}; }}
 QAbstractItemView::indicator:checked, QCheckBox::indicator:checked {{ background: {p['accent']};
     border-color: {p['accent']}; {ck_img} }}
+QPushButton#accHead {{ background: transparent; border: none; border-top: 1px solid {p['line']}; border-radius: 0;
+    padding: 0; min-height: 36px; }}
+QPushButton#accHead[first="true"] {{ border-top: none; }}
+QPushButton#accHead:hover {{ background: {p['panel2']}; }}
+QPushButton#accHead:pressed {{ background: {p['panel2']}; }}
+QLabel#accTitle {{ font-size: 9pt; font-weight: 600; letter-spacing: 1px; }}
+QLabel#accSum {{ color: {p['muted']}; font-size: 9pt; }}
+QListWidget#gcheck {{ background: {p['panel']}; border: 1px solid {p['line']}; }}
 QListWidget#gcheck::item {{ padding: 5px 6px; border-radius: 5px; }}
 QListWidget#gcheck::item:hover {{ background: {p['panel2']}; }}
 QListWidget#gcheck::item:selected {{ background: {p['panel2']}; color: {p['text']}; }}

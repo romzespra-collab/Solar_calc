@@ -1,7 +1,8 @@
 """mod_page_green.py  v1.10.0
-Страница «💰 Зелёный тариф»: подключение к сети и проверки, окупаемость (взаимозачёт по зонам, налог, тариф до
-2030, разброс по годам погоды), смета (оборудование, монтаж, документы, платежи ОСР), цены рынка, солнце за
-5 лет, документы и шаги. Станция (панели, инвертор, АКБ, выработка, потребление дома) — из ⚙ Настроек.
+Страница «💰 Зелёный тариф» — одна страница без вкладок: слева настройки группами (раскрываются: место и сеть,
+счётчик и тариф, монтаж и инвертор, мои цены, цены рынка, документы и шаги), справа результат одной лентой
+(накопленная выгода, итоги за год, по месяцам, проверки, смета, солнце за 5 лет, расчёт по месяцам; таблицы —
+по высоте строк, без пустых окон). Станция (панели, инвертор, АКБ, выработка, потребление дома) — из ⚙ Настроек.
 
 Журнал:
 v1.10.0: первая версия — из «Калькулятора зелёного тарифа» v1.2.0, связана со станцией и погодой региона.
@@ -9,10 +10,11 @@ v1.10.0: первая версия — из «Калькулятора зелё�
 
 import json
 
-from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QGuiApplication
-from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QFrame, QTabWidget, QListWidget,
-                               QListWidgetItem, QPlainTextEdit, QMenu, QTableWidgetItem, QLineEdit, QHeaderView)
+from PySide6.QtCore import Qt, QTimer, QUrl, QRect, QSize
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QFontMetrics
+from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QFrame, QListWidget, QListWidgetItem,
+                               QPlainTextEdit, QMenu, QTableWidgetItem, QLineEdit, QHeaderView, QPushButton, QLabel,
+                               QComboBox)
 
 from .mod_base import APP_ROOT, log
 from .mod_equipment import INVERTER_DB
@@ -25,12 +27,60 @@ GEN_COL, CONS_COL, EXP_COL = "#f5b545", "#4f8cff", "#3ecf8e"
 SUN_COLS = ("#f5b545", "#8a91a3", "#5c6577")
 
 
+class _Section(QWidget):
+    """Группа настроек слева: заголовок (▾/▸, клик — свернуть) + поля; свёрнутая показывает краткий итог."""
+
+    def __init__(self, title, opened=True, first=False):
+        super().__init__()
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        self.head = QPushButton()
+        self.head.setObjectName("accHead")
+        self.head.setProperty("first", "true" if first else "false")
+        self.head.setCheckable(True)
+        self.head.setCursor(Qt.PointingHandCursor)
+        hl = QHBoxLayout(self.head)
+        hl.setContentsMargins(2, 0, 2, 0)
+        hl.setSpacing(6)
+        self.arrow = QLabel()
+        self.arrow.setObjectName("accTitle")
+        self.title = QLabel(title.upper())
+        self.title.setObjectName("accTitle")
+        self.sum = QLabel("")
+        self.sum.setObjectName("accSum")
+        for lb in (self.arrow, self.title, self.sum):
+            lb.setAttribute(Qt.WA_TransparentForMouseEvents)
+        hl.addWidget(self.arrow)
+        hl.addWidget(self.title)
+        hl.addStretch(1)
+        hl.addWidget(self.sum)
+        self.body = QWidget()
+        self.grid = QGridLayout(self.body)
+        self.grid.setContentsMargins(0, 2, 0, 10)
+        self.grid.setHorizontalSpacing(10)
+        self.grid.setVerticalSpacing(7)
+        self.grid.setColumnMinimumWidth(0, 96)
+        self.grid.setColumnStretch(1, 1)
+        v.addWidget(self.head)
+        v.addWidget(self.body)
+        self.head.toggled.connect(self._show)
+        self.head.setChecked(opened)
+        self._show(opened)
+
+    def _show(self, on):
+        self.body.setVisible(on)
+        self.arrow.setText("▾" if on else "▸")
+        self.sum.setVisible(not on)
+
+
 class GreenPages:
     """Миксин окна: страница зелёного тарифа. Настройки — в self.s["green"] (сохраняются с профилем станции)."""
 
     # ─────────────── построение ───────────────
     def _page_green(self):
         self.gw = {}
+        self.g_secs = {}
         self._G = None
         self._g_loading = False
         self._g_timer = QTimer(self)
@@ -38,19 +88,21 @@ class GreenPages:
         self._g_timer.setInterval(80)
         self._g_timer.timeout.connect(self._green_update)
         pg, v = self._page()
+        v.setSpacing(10)
         pg.setContextMenuPolicy(Qt.CustomContextMenu)
         pg.customContextMenuRequested.connect(lambda pos: self._green_menu(pg.mapToGlobal(pos)))
         hdr = QHBoxLayout()
-        hdr.addWidget(_lab("💰 Зелёный тариф: окупаемость домашней СЭС", "bigTitle"))
+        hdr.setSpacing(10)
+        hdr.addWidget(_lab("💰 Зелёный тариф", "bigTitle"))
+        sub = _lab(f"{G.fnum(G.GREEN_TARIFF, 3)} грн/кВт·ч до 01.01.2030 (НКРЭКУ № 1613) · станция — из ⚙ Настроек",
+                   "hint")
+        hdr.addWidget(sub)
         hdr.addStretch(1)
         hdr.addWidget(_btn("⚙ Станция", None, "Панели, инвертор, АКБ, потребление дома — в настройках станции",
                            lambda: self._go_page(self.page_idx["settings"])))
         hdr.addWidget(_btn("📄 Отчёт HTML…", "primary", "Сохранить отчёт и открыть в браузере (печать, отправка)",
                            self.green_report))
         v.addLayout(hdr)
-        v.addWidget(_lab(f"Украина · зелёный тариф {G.fnum(G.GREEN_TARIFF, 3)} грн/кВт·ч без НДС (НКРЭКУ № 1613, "
-                         f"с 01.10.2026), действует до 01.01.2030 · станция, выработка и потребление — из ⚙ Настроек",
-                         "hint", True))
         kp = QGridLayout()
         kp.setSpacing(10)
         self.gk = {}
@@ -59,44 +111,59 @@ class GreenPages:
             fr = QFrame()
             fr.setObjectName("kpi")
             fv = QVBoxLayout(fr)
-            fv.setContentsMargins(12, 8, 12, 8)
+            fv.setContentsMargins(12, 6, 12, 6)
             fv.setSpacing(0)
-            t = _lab(cap, "kpiCap")
             val = _lab("—", "kpiVal")
             sub = _lab("", "kpiCap", True)
-            fv.addWidget(t)
+            fv.addWidget(_lab(cap, "kpiCap"))
             fv.addWidget(val)
             fv.addWidget(sub)
             self.gk[k] = (val, sub)
             kp.addWidget(fr, 0, i)
         v.addLayout(kp)
-        self.g_tabs = QTabWidget()
-        self.g_tabs.setDocumentMode(True)
-        for build, title in ((self._g_tab_conn, "Подключение и проверки"), (self._g_tab_econ, "Окупаемость"),
-                             (self._g_tab_budget, "Смета"), (self._g_tab_prices, "Цены"),
-                             (self._g_tab_sun, "Солнце (5 лет)"), (self._g_tab_docs, "Документы и шаги")):
-            self.g_tabs.addTab(build(), title)
-        v.addWidget(self.g_tabs, 1)
+        body = QHBoxLayout()
+        body.setSpacing(10)
+        left = self._g_left()
+        left.setFixedWidth(404)
+        body.addWidget(left)
+        body.addWidget(self._g_right(), 1)
+        v.addLayout(body, 1)
         self._g_load()
         return pg
 
-    def _g_scroll(self):
-        inner = QWidget()
-        inner.setContextMenuPolicy(Qt.CustomContextMenu)
-        inner.customContextMenuRequested.connect(lambda pos: self._green_menu(inner.mapToGlobal(pos)))
-        lay = QVBoxLayout(inner)
-        lay.setContentsMargins(2, 10, 8, 8)
-        lay.setSpacing(12)
-        return self._scroll(inner), lay
+    def _g_menu_on(self, w):
+        w.setContextMenuPolicy(Qt.CustomContextMenu)
+        w.customContextMenuRequested.connect(lambda pos, w=w: self._green_menu(w.mapToGlobal(pos)))
 
-    def _g_form(self, title):
-        fr, cv = _card(title)
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(8)
-        grid.setColumnStretch(1, 1)
-        cv.addLayout(grid)
-        return fr, cv, grid
+    # ── слева: настройки группами (раскрываются) ──
+    def _g_left(self):
+        inner = QWidget()
+        self._g_menu_on(inner)
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(0, 0, 6, 0)
+        lay.setSpacing(0)
+        card = QFrame()
+        card.setObjectName("card")
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(12, 2, 12, 8)
+        cl.setSpacing(0)
+        for key, title, opened, build in (("place", "Место и сеть", True, self._g_sec_place),
+                                          ("tariff", "Счётчик и тариф", True, self._g_sec_tariff),
+                                          ("mount", "Монтаж и инвертор", False, self._g_sec_mount),
+                                          ("own", "Мои цены", False, self._g_sec_own),
+                                          ("prices", "Цены рынка", False, self._g_sec_prices),
+                                          ("docs", "Документы и шаги", False, self._g_sec_docs)):
+            sec = _Section(title, opened, first=not self.g_secs)
+            build(sec.grid)
+            if key == "docs":
+                sec.head.toggled.connect(lambda on: on and QTimer.singleShot(0, self._g_fit_list))
+            cl.addWidget(sec)
+            self.g_secs[key] = sec
+        lay.addWidget(card)
+        lay.addStretch(1)
+        sa = self._scroll(inner)
+        sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        return sa
 
     @staticmethod
     def _g_row(grid, label, w, tip=""):
@@ -108,6 +175,371 @@ class GreenPages:
         grid.addWidget(lb, r, 0)
         grid.addWidget(w, r, 1)
         return lb
+
+    @staticmethod
+    def _g_span(grid, w):
+        grid.addWidget(w, grid.rowCount(), 0, 1, 2)
+        return w
+
+    def _g_toggle_row(self, grid, key, text, tip=""):
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(self._g_toggle(key))
+        lb = _lab(text, "fieldLab", True)
+        row.addWidget(lb, 1)
+        w = QWidget()
+        w.setLayout(row)
+        if tip:
+            w.setToolTip(tip)
+        self._g_span(grid, w)
+
+    def _g_sec_place(self, grid):
+        self._g_row(grid, "Область", self._g_combo("region", [("", "Авто — по координатам")] +
+                                                  [(r[0], r[0]) for r in G.REGIONS]),
+                    "Область станции — для ставок ОСР. Авто: ближайший областной центр к широте/долготе из ⚙ Настроек")
+        self._g_row(grid, "ОСР", self._g_combo("osr", [("", "По области")] + [(n, n) for n in sorted(G.OSR_RATES)]),
+                    "Оператор системы распределения (облэнерго)")
+        self._g_row(grid, "Местность", self._g_seg("area", G.AREAS), "Ставки присоединения в селе ниже, чем в городе")
+        self._g_row(grid, "Подключение", self._g_combo("conn", (("ok", "Мощности хватает"),
+                                                               ("increase", "Увеличить мощность"),
+                                                               ("new", "Подключения ещё нет"))))
+        self._g_row(grid, "Ввод в дом", self._g_seg("phase", (("3", "3 фазы"), ("1", "1 фаза"), ("?", "не знаю"))))
+        self._g_row(grid, "Разрешено", self._g_step("permitted", 0, 150, 0.5, 1, "кВт"),
+                    "Разрешённая мощность — из договора с ОСР или личного кабинета облэнерго; 0 — не знаю")
+        self._g_toggle_row(grid, "grid_auto", "Плату ОСР оценить по ставкам НКРЭКУ 2026")
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+        row.addWidget(self._g_step("grid_cost", 0, 5_000_000, 500, 0, "грн"), 1)
+        row.addWidget(_btn("↗", "chip", "Калькулятор стандартного присоединения НКРЭКУ (поиск)",
+                           lambda: QDesktopServices.openUrl(QUrl(G.URL_CONN_CALC))))
+        w = QWidget()
+        w.setLayout(row)
+        self._g_row(grid, "Своя сумма", w, "Сумма из счёта ОСР или калькулятора НКРЭКУ")
+        self.g_grid = self._g_span(grid, self._rich())
+
+    def _g_sec_tariff(self, grid):
+        self._g_row(grid, "Учёт", self._g_seg("meter_zones", (("2", "День/ночь"), ("1", "1 зона"), ("3", "3 зоны"))),
+                    "Счётчик: день/ночь (2 зоны), однозонный или ночь/полупик/пик (3 зоны)")
+        self.g_tariff = Stepper(0, 50, 0.01, 2, "грн")
+        self.g_tariff.changed.connect(self._g_tariff)
+        self._g_row(grid, "Цена дома", self.g_tariff, "Цена для населения, грн/кВт·ч — общая со станцией (⚙ Сеть и "
+                                                      "тариф): 4,32 грн до 31.10.2026, дальше — решение КМУ")
+        self.g_zones = self._g_span(grid, _lab("", "hint", True))
+        self._g_row(grid, "Взаимозачёт", self._g_seg("net_mode", (("total", "За месяц"), ("zones", "По зонам"))),
+                    "Как поставщик сводит сальдо при зонном учёте — уточните в договоре.\n«По зонам» выгоднее: "
+                    "ночное потребление не «съедает» дневную продажу")
+        self._g_row(grid, "Погода", self._g_seg("weather", (("reg", "📍 Регион"), ("avg", "⛅ Средний"))),
+                    "📍 Регион 5 лет — реальная погода (и разброс по годам), если загружена; иначе — средний год")
+        self._g_row(grid, "Зелёный тариф", self._g_step("green", 0, 50, 0.001, 3, "грн"),
+                    "Грн/кВт·ч без НДС. НКРЭКУ № 1613 с 01.10.2026 — 613,40 коп. Пересматривается ежеквартально")
+        self._g_row(grid, "Налог", self._g_step("tax", 0, 60, 0.5, 1, "%"),
+                    "18 % НДФЛ + 5 % военный сбор, удерживает поставщик")
+        self._g_row(grid, "Год ввода", self._g_step("start_year", 2024, 2040, 1, 0, ""),
+                    "Год ввода СЭС. Зелёный тариф платят до 01.01.2030")
+        self._g_row(grid, "После 2029", self._g_step("post_price", 0, 20, 0.05, 2, "грн"),
+                    "Цена продажи после 2029, грн/кВт·ч: самопроизводство — цена РДН, но не выше тарифа для населения")
+        self._g_row(grid, "Деградация", self._g_step("degr", 0, 5, 0.1, 1, "%/год"), "Деградация панелей в год")
+        self._g_row(grid, "Горизонт", self._g_step("years", 5, 40, 1, 0, "лет"), "На сколько лет считать выгоду")
+
+    def _g_sec_mount(self, grid):
+        self.g_station = self._g_span(grid, self._rich())
+        self._g_row(grid, "Панели", self._g_seg("mount", (("roof", "Крыша"), ("ground", "Земля"))),
+                    "Крыша / фасад — до 50 кВт; на земле (участок) — до 30 кВт")
+        self._g_row(grid, "Поле → щит", self._g_step("field_dist", 0, 1000, 5, 0, "м"),
+                    "Длина кабеля и траншеи от поля до электрощита")
+        self._g_row(grid, "Отдаёт в сеть", self._g_seg("export", G.EXPORT_MODES),
+                    "Умеет ли инвертор продавать в сеть (on-grid / гибрид с экспортом). «По модели» — по серии инвертора")
+        self._g_toggle_row(grid, "meter_paid", "Двунаправленный счётчик покупаю у ОСР")
+
+    def _g_sec_own(self, grid):
+        self._g_span(grid, _lab("Если цена уже известна (счёт, предложение) — впишите всю сумму: она заменит оценку.",
+                                "hint", True))
+        self.g_own = {}
+        for key, title in G.OWN_KEYS:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
+            st = Stepper(0, 100_000_000, 1000, 0, "грн")
+            st.changed.connect(lambda x, key=key: self._g_own_set(key, float(x)))
+            row.addWidget(st, 1)
+            rb = _btn("↺", "chip", "Вернуть оценку", lambda key=key: self._g_own_set(key, 0.0, True))
+            row.addWidget(rb)
+            box = QWidget()
+            box.setLayout(row)
+            self._g_row(grid, title.replace(" (все)", ""), box)
+            hint = _lab("", "hint", True)
+            grid.addWidget(hint, grid.rowCount(), 1)
+            self.g_own[key] = (st, rb, hint)
+        self._g_row(grid, "Доп. материалы", self._g_step("extra_mat", 0, 10_000_000, 500, 0, "грн"),
+                    "Ваша сумма: бетон, сетка/забор, болты, кабель-канал — всё, чего нет в смете")
+        ed = QLineEdit()
+        ed.setPlaceholderText("бетон, забор, болты…")
+        ed.editingFinished.connect(lambda: self._g_set("extra_note", ed.text()[:200]))
+        self.gw["extra_note"] = ed
+        self._g_row(grid, "Что это", ed)
+
+    def _g_sec_prices(self, grid):
+        self._g_span(grid, _lab("Ориентиры рынка 2026, мин – макс. Подставьте цены из своих предложений — смета и "
+                                "окупаемость пересчитаются сразу. Правый клик по строке — сбросить её.", "hint", True))
+        self.g_price_w = {}
+        for r, (key, label, unit, _mn, _mx, dec) in enumerate(G.PRICE_DEFS):
+            lb = _lab(f"{label}, {unit}", "fieldLab", True)
+            lb.setContextMenuPolicy(Qt.CustomContextMenu)
+            lb.customContextMenuRequested.connect(lambda pos, r=r, lb=lb: self._g_price_menu(r, lb.mapToGlobal(pos)))
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
+            pair = []
+            for idx in (0, 1):
+                sp = _Spin()
+                sp.setDecimals(dec)
+                sp.setRange(0, 10_000_000)
+                sp.setSingleStep(0.05 if dec else 100)
+                sp.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                sp.setKeyboardTracking(False)
+                sp.setFocusPolicy(Qt.StrongFocus)
+                sp.setFixedWidth(84)
+                sp.setToolTip(("Мин" if idx == 0 else "Макс") + f", {unit}")
+                sp.valueChanged.connect(lambda val, k=key, i=idx: self._g_price_set(k, i, val))
+                row.addWidget(sp)
+                pair.append(sp)
+            box = QWidget()
+            box.setLayout(row)
+            rr = grid.rowCount()
+            grid.addWidget(lb, rr, 0)
+            grid.addWidget(box, rr, 1, Qt.AlignRight)
+            self.g_price_w[key] = pair
+        self._g_span(grid, _btn("↺ Все цены — ориентиры 2026", None, "Вернуть все диапазоны цен по умолчанию",
+                                self._g_prices_reset))
+
+    def _g_sec_docs(self, grid):
+        self.g_progress = self._g_span(grid, _lab("", "hint", True))
+        self.g_check = QListWidget()
+        self.g_check.setObjectName("gcheck")
+        self.g_check.setWordWrap(True)
+        self.g_check.setTextElideMode(Qt.ElideNone)
+        self.g_check.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.g_check.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.g_check.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.g_check.customContextMenuRequested.connect(self._g_check_menu)
+        for section, items in G.STEPS:
+            h = QListWidgetItem(section.upper())
+            h.setFlags(Qt.ItemIsEnabled)
+            f = h.font()
+            f.setBold(True)
+            h.setFont(f)
+            h.setData(Qt.UserRole, "")
+            self.g_check.addItem(h)
+            for text in items:
+                it = QListWidgetItem(text)
+                it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
+                it.setCheckState(Qt.Unchecked)
+                it.setData(Qt.UserRole, text)
+                self.g_check.addItem(it)
+        self.g_check.itemChanged.connect(self._g_check_changed)
+        self._g_span(grid, self.g_check)
+        QTimer.singleShot(0, self._g_fit_list)
+        notes = self._g_span(grid, self._rich())
+        notes.setText(G.NOTES_HTML)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        for text, url in (("НКРЭКУ ↗", G.URL_NERC), ("Присоединение ↗", G.URL_CONN_CALC), ("Тариф № 1613 ↗", G.URL_TARIFF_NEWS)):
+            row.addWidget(_btn(text, "chip", url, lambda u=url: QDesktopServices.openUrl(QUrl(u))))
+        row.addStretch(1)
+        w = QWidget()
+        w.setLayout(row)
+        self._g_span(grid, w)
+        self.g_notes = QPlainTextEdit()
+        self.g_notes.setPlaceholderText("Мои заметки: номера заявок, ответы ОСР, контакты установщика…")
+        self.g_notes.setFixedHeight(96)
+        self.g_notes.textChanged.connect(self._g_notes_changed)
+        self._g_span(grid, self.g_notes)
+
+    def _g_fit_list(self):
+        """Список шагов — по высоте содержимого (без своей прокрутки): высота каждой строки по переносу текста."""
+        lw = self.g_check
+        w = lw.width() - 2 * lw.frameWidth() - 44            # галочка, отступы
+        if w < 120:
+            return
+        total = 0
+        for i in range(lw.count()):
+            it = lw.item(i)
+            fm = QFontMetrics(it.font())
+            h = fm.boundingRect(QRect(0, 0, w, 10000), Qt.TextWordWrap, it.text()).height() + 12
+            it.setSizeHint(QSize(w, h))
+            total += h
+        lw.setFixedHeight(total + 2 * lw.frameWidth() + 4)
+
+    # ── справа: результат одной лентой ──
+    def _g_right(self):
+        inner = QWidget()
+        self._g_menu_on(inner)
+        grid = QGridLayout(inner)
+        grid.setContentsMargins(0, 0, 6, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(10)
+        grid.setColumnStretch(0, 6)
+        grid.setColumnStretch(1, 5)
+        self.g_cards = {}
+
+        def chart_card(ch, key):
+            fr = QFrame()
+            fr.setObjectName("card")
+            cl = QVBoxLayout(fr)
+            cl.setContentsMargins(10, 8, 10, 6)
+            cl.addWidget(ch)
+            self.charts.append(ch)
+            self.g_cards[key] = fr
+            return fr
+
+        self.gch_cum = Chart("line", "грн", "Накопленная выгода")
+        self.gch_cum.xfmt = "year"
+        grid.addWidget(chart_card(self.gch_cum, "cum"), 0, 0)
+        fr, cv = _card("Итоги за год")
+        kv = QGridLayout()
+        kv.setHorizontalSpacing(14)
+        kv.setVerticalSpacing(3)
+        kv.setColumnStretch(1, 1)
+        self.g_ev, self.g_el = {}, {}
+        for key, title in (("gen", "Выработка (AC)"), ("cons", "Потребление"), ("exp", "В сеть (сальдо)"),
+                           ("save", "Экономия на счетах"), ("inc", "Доход от продажи"), ("tax", "Налог"),
+                           ("bill", "Счёт: без СЭС → с СЭС"), ("bgreen", "Польза до 2030"),
+                           ("bpost", "Польза после 2029"), ("pb", "Окупаемость"), ("pbbad", "Каждый год как худший"),
+                           ("self", "Без продажи в сеть"), ("profit", "Чистая выгода")):
+            lb = _lab(title, "fieldLab")
+            val = _lab("—")
+            val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            val.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            f = val.font()
+            f.setBold(True)
+            val.setFont(f)
+            r = kv.rowCount()
+            kv.addWidget(lb, r, 0)
+            kv.addWidget(val, r, 1)
+            self.g_el[key], self.g_ev[key] = lb, val
+        cv.addLayout(kv)
+        cv.addStretch(1)
+        grid.addWidget(fr, 0, 1)
+        self.gch_month = Chart("bar", "кВт·ч", "По месяцам")
+        grid.addWidget(chart_card(self.gch_month, "month"), 1, 0)
+        fr, cv = _card("Проверки")
+        self.g_checks = self._rich()
+        cv.addWidget(self.g_checks)
+        cv.addStretch(1)
+        grid.addWidget(fr, 1, 1)
+        # смета: таблица по высоте строк + итог и рынок справа
+        fr, cv = _card("Смета")
+        self.g_cards["budget"] = fr
+        row = QHBoxLayout()
+        row.setSpacing(14)
+        self.gtb_budget = make_table(["✓", "Статья", "Кому", "Мин, грн", "Макс, грн"],
+                                     [("🏠 Станция уже есть — оставить только оформление", lambda _r: self._g_only_docs()),
+                                      ("✓ Включить все статьи", lambda _r: self._g_set("excluded", [], True))])
+        hh = self.gtb_budget.horizontalHeader()
+        hh.setSectionResizeMode(1, QHeaderView.Stretch)
+        hh.setStretchLastSection(False)
+        self.gtb_budget.itemChanged.connect(self._g_budget_item)
+        row.addWidget(self.gtb_budget, 1)
+        sidew = QWidget()
+        sidew.setFixedWidth(300)
+        side = QVBoxLayout(sidew)
+        side.setContentsMargins(0, 0, 0, 0)
+        side.setSpacing(6)
+        self.g_total = _lab("—", "kpiVal", True)
+        self.g_total_sub = self._rich()
+        self.g_market = self._rich()
+        side.addWidget(self.g_total)
+        side.addWidget(self.g_total_sub)
+        side.addWidget(self.g_market)
+        side.addStretch(1)
+        row.addWidget(sidew)
+        cv.addLayout(row)
+        cv.addWidget(_lab("Снимите галочку, если статья уже куплена или входит в «под ключ». Станция уже стоит? Правый "
+                          "клик → «Станция уже есть». Свои цены и цены рынка — слева.", "hint", True))
+        grid.addWidget(fr, 2, 0, 1, 2)
+        # солнце за 5 лет
+        fr, cv = _card("Солнце за 5 лет")
+        self.g_cards["sun"] = fr
+        row = QHBoxLayout()
+        self.g_sun_hint = self._rich()
+        row.addWidget(self.g_sun_hint, 1)
+        row.addWidget(_btn("📍 Загрузить погоду региона", "primary", "Погода за 5 лет для точки станции (Open-Meteo / "
+                                                                     "PVGIS-SARAH3 — выбор на странице 🌐 Данные солнца)",
+                           lambda: self.load_region()))
+        cv.addLayout(row)
+        kp = QGridLayout()
+        kp.setSpacing(8)
+        self.gks = {}
+        for i, (k, cap) in enumerate((("sunday", "Дней с солнцем (≥ 1 ч)"), ("clear", "Ясных · пасмурных дней"),
+                                      ("hours", "Часов солнца в год"), ("yield", "Выработка на 1 кВт·п"))):
+            box = QFrame()
+            box.setObjectName("kpi")
+            fv = QVBoxLayout(box)
+            fv.setContentsMargins(10, 5, 10, 5)
+            fv.setSpacing(0)
+            fv.addWidget(_lab(cap, "kpiCap"))
+            val = _lab("—", "kpiVal")
+            sub = _lab("", "kpiCap", True)
+            fv.addWidget(val)
+            fv.addWidget(sub)
+            self.gks[k] = (val, sub)
+            kp.addWidget(box, 0, i)
+        cv.addLayout(kp)
+        self.g_sun_note = self._rich()
+        cv.addWidget(self.g_sun_note)
+        charts = QHBoxLayout()
+        charts.setSpacing(12)
+        self.gch_days = Chart("bar", "дней", "Дней в месяце, среднее за 5 лет")
+        self.gch_years = Chart("bar", "кВт·ч", "Выработка станции по годам погоды")
+        for ch in (self.gch_days, self.gch_years):
+            self.charts.append(ch)
+            charts.addWidget(ch, 1)
+        cv.addLayout(charts)
+        self.gtb_sun = make_table(["Месяц", "Ясных", "Переменных", "Пасмурных", "Часов солнца", "кВт·ч/м² (гориз.)",
+                                   "На 1 кВт·п, кВт·ч", "Мин – макс"])
+        self.gtb_sun.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        cv.addWidget(self.gtb_sun)
+        cv.addWidget(_lab("Ясный день — пришло ≥ 70 % от ясного неба, пасмурный — < 35 %. Час солнца — прямое > 120 Вт/м² "
+                          "(как у метеостанций). Выработка на 1 кВт·п — из расчёта станции, по годам — по солнцу "
+                          "каждого года.", "hint", True))
+        grid.addWidget(fr, 3, 0, 1, 2)
+        # расчёт по месяцам
+        fr, cv = _card("Расчёт по месяцам")
+        self.g_cards["months"] = fr
+        self.gtb_month = make_table(["Месяц", "Выработка, кВт·ч", "Потребление", "В сеть (оплата)", "Из сети",
+                                     "Экономия, грн", "Доход, грн"])
+        self.gtb_month.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        cv.addWidget(self.gtb_month)
+        cv.addWidget(_lab("Помесячный взаимозачёт по часовой выработке станции (панели, MPPT, провода, КПД и мощность "
+                          "инвертора). Своё потребление экономит по цене зоны, излишек месяца оплачивается по зелёному "
+                          "тарифу минус налог (до 2029 г.), дальше — по цене продажи после 2029. АКБ не сдвигает "
+                          "энергию на ночь (в расчёте не учтено).", "hint", True))
+        grid.addWidget(fr, 4, 0, 1, 2)
+        grid.setRowStretch(5, 1)
+        self.g_right_sa = self._scroll(inner)
+        self.g_right_sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        return self.g_right_sa
+
+    @staticmethod
+    def _g_fit(t):
+        """Таблица по высоте строк — без своей прокрутки и пустого места."""
+        t.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        t.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        hh = t.horizontalHeader()
+        h = max(hh.height(), hh.sizeHint().height())
+        h += sum(t.rowHeight(r) for r in range(t.rowCount())) + 2 * t.frameWidth() + 2
+        t.setFixedHeight(h)
+
+    def _g_goto(self, key):
+        fr = self.g_cards.get(key)
+        if fr is not None:
+            self.g_right_sa.verticalScrollBar().setValue(fr.y())
+
+    def _g_open_all(self, on):
+        for sec in self.g_secs.values():
+            sec.head.setChecked(on)
 
     # поля → self.s["green"]
     def _g_seg(self, key, items):
@@ -127,6 +559,9 @@ class GreenPages:
         w = NoWheelCombo()
         for data, text in items:
             w.addItem(text, data)
+        w.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        w.setMinimumContentsLength(10)
+        w.view().setMinimumWidth(w.view().sizeHintForColumn(0) + 36)
         w.currentIndexChanged.connect(lambda _i, key=key, w=w: self._g_set(key, w.currentData()))
         self.gw[key] = w
         return w
@@ -151,370 +586,6 @@ class GreenPages:
             self._green_update()
         else:
             self._g_timer.start()
-
-    # ── вкладка «Подключение и проверки» ──
-    def _g_tab_conn(self):
-        sa, lay = self._g_scroll()
-        cols = QHBoxLayout()
-        cols.setSpacing(12)
-        left, right = QVBoxLayout(), QVBoxLayout()
-        left.setSpacing(12)
-        right.setSpacing(12)
-        fr, cv, grid = self._g_form("Место и подключение к сети")
-        self._g_row(grid, "Область", self._g_combo("region", [("", "Авто — по координатам станции")] +
-                                                  [(r[0], r[0]) for r in G.REGIONS]),
-                    "Область станции — для ставок ОСР. Авто: ближайший областной центр к широте/долготе из ⚙ Настроек")
-        self._g_row(grid, "ОСР (облэнерго)", self._g_combo("osr", [("", "По области")] +
-                                                          [(n, n) for n in sorted(G.OSR_RATES)]))
-        self._g_row(grid, "Местность", self._g_seg("area", G.AREAS), "Ставки присоединения в селе ниже, чем в городе")
-        self._g_row(grid, "Подключение", self._g_combo("conn", G.CONN_OPTIONS))
-        self._g_row(grid, "Ввод в дом", self._g_seg("phase", G.PHASES))
-        self._g_row(grid, "Разрешённая мощность", self._g_step("permitted", 0, 150, 0.5, 1, "кВт"),
-                    "Из договора с ОСР или личного кабинета облэнерго; 0 — не знаю")
-        row = QHBoxLayout()
-        row.addWidget(self._g_toggle("grid_auto"))
-        row.addWidget(_lab("Плату ОСР оценить по ставкам НКРЭКУ 2026", "fieldLab"))
-        row.addStretch(1)
-        w = QWidget()
-        w.setLayout(row)
-        row.setContentsMargins(0, 0, 0, 0)
-        self._g_row(grid, "", w)
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(self._g_step("grid_cost", 0, 5_000_000, 500, 0, "грн"), 1)
-        row.addWidget(_btn("Калькулятор ↗", None, "Калькулятор стандартного присоединения НКРЭКУ (поиск)",
-                           lambda: QDesktopServices.openUrl(QUrl(G.URL_CONN_CALC))))
-        w = QWidget()
-        w.setLayout(row)
-        self.g_cost_lab = self._g_row(grid, "Своя сумма ОСР", w, "Сумма из счёта ОСР или калькулятора НКРЭКУ")
-        self.g_grid = self._rich()
-        cv.addWidget(self.g_grid)
-        left.addWidget(fr)
-        fr, cv, grid = self._g_form("Станция — из ⚙ Настроек")
-        self.g_station = self._rich()
-        cv.insertWidget(1, self.g_station)
-        self._g_row(grid, "Установка панелей", self._g_seg("mount", G.MOUNTS))
-        self.g_fd_lab = self._g_row(grid, "Поле → щит", self._g_step("field_dist", 0, 1000, 5, 0, "м"),
-                                    "Длина кабеля и траншеи от поля до электрощита")
-        self._g_row(grid, "Отдаёт в сеть", self._g_seg("export", G.EXPORT_MODES),
-                    "Умеет ли инвертор продавать в сеть (on-grid / гибрид с экспортом). «По модели» — по серии инвертора")
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(self._g_toggle("meter_paid"))
-        row.addWidget(_lab("Двунаправленный счётчик покупаю у ОСР", "fieldLab"))
-        row.addStretch(1)
-        w = QWidget()
-        w.setLayout(row)
-        self._g_row(grid, "", w)
-        left.addWidget(fr)
-        left.addStretch(1)
-        fr, cv = _card("Проверки")
-        self.g_checks = self._rich()
-        cv.addWidget(self.g_checks)
-        right.addWidget(fr)
-        right.addStretch(1)
-        cols.addLayout(left, 1)
-        cols.addLayout(right, 1)
-        lay.addLayout(cols)
-        lay.addStretch(1)
-        return sa
-
-    # ── вкладка «Окупаемость» ──
-    def _g_tab_econ(self):
-        sa, lay = self._g_scroll()
-        top = QHBoxLayout()
-        top.setSpacing(12)
-        lcol = QVBoxLayout()
-        lcol.setSpacing(12)
-        fr, cv, grid = self._g_form("Счётчик и цены")
-        self._g_row(grid, "Учёт", self._g_seg("meter_zones", G.METER_TYPES))
-        self.g_tariff = Stepper(0, 50, 0.01, 2, "грн/кВт·ч")
-        self.g_tariff.changed.connect(self._g_tariff)
-        self._g_row(grid, "Цена для населения", self.g_tariff, "Тариф станции (⚙ Настройки → Сеть и тариф): 4,32 грн "
-                                                               "до 31.10.2026, дальше — решение КМУ")
-        self.g_zones = _lab("", "hint", True)
-        grid.addWidget(self.g_zones, grid.rowCount(), 0, 1, 2)
-        self._g_row(grid, "Взаимозачёт зон", self._g_seg("net_mode", G.NET_MODES),
-                    "Как поставщик сводит сальдо при зонном учёте — уточните в договоре.\n«По зонам» выгоднее: "
-                    "ночное потребление не «съедает» дневную продажу")
-        self._g_row(grid, "Погода для расчёта", self._g_seg("weather", G.GEN_WEATHER),
-                    "📍 Регион 5 лет — реальная погода (и разброс по годам), если загружена; иначе — средний год")
-        lcol.addWidget(fr)
-        fr, cv, grid = self._g_form("Зелёный тариф и налоги")
-        self._g_row(grid, "Зелёный тариф", self._g_step("green", 0, 50, 0.001, 3, "грн/кВт·ч"),
-                    "Без НДС. НКРЭКУ № 1613 с 01.10.2026 — 613,40 коп. Пересматривается ежеквартально")
-        self._g_row(grid, "Налог с дохода", self._g_step("tax", 0, 60, 0.5, 1, "%"),
-                    "18 % НДФЛ + 5 % военный сбор, удерживает поставщик")
-        self._g_row(grid, "Год ввода СЭС", self._g_step("start_year", 2024, 2040, 1, 0, ""),
-                    "Зелёный тариф платят до 01.01.2030")
-        self._g_row(grid, "Продажа после 2029", self._g_step("post_price", 0, 20, 0.05, 2, "грн/кВт·ч"),
-                    "Оценка: самопроизводство — цена РДН, но не выше тарифа для населения")
-        self._g_row(grid, "Деградация панелей", self._g_step("degr", 0, 5, 0.1, 1, "% в год"))
-        self._g_row(grid, "Горизонт расчёта", self._g_step("years", 5, 40, 1, 0, "лет"))
-        lcol.addWidget(fr)
-        lcol.addStretch(1)
-        top.addLayout(lcol, 2)
-        fr, cv = _card("Итоги — средний год по погоде")
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(6)
-        grid.setColumnStretch(1, 1)
-        self.g_ev, self.g_el = {}, {}
-        for key, title in (("gen", "Выработка за год (AC)"), ("cons", "Потребление (дом + х.х. инвертора)"),
-                           ("zones", "По зонам: выработка / потребление"), ("save", "Экономия на счетах за свет"),
-                           ("inc", "Доход от продажи (после налога)"), ("tax", "Налог"),
-                           ("bill", "Счёт за свет: без СЭС → с СЭС"), ("bgreen", "Польза в год, пока зелёный тариф"),
-                           ("bpost", "Польза в год после 2029"), ("pb", "Окупаемость (мин – макс бюджет)"),
-                           ("pbbad", "Если каждый год как худший"), ("profit", "Чистая выгода"),
-                           ("self", "Без продажи в сеть (только своё)")):
-            lb = _lab(title, "fieldLab")
-            val = _lab("—")
-            val.setWordWrap(True)
-            val.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            f = val.font()
-            f.setBold(True)
-            val.setFont(f)
-            r = grid.rowCount()
-            grid.addWidget(lb, r, 0)
-            grid.addWidget(val, r, 1)
-            self.g_el[key], self.g_ev[key] = lb, val
-        cv.addLayout(grid)
-        cv.addStretch(1)
-        top.addWidget(fr, 3)
-        lay.addLayout(top)
-        charts = QHBoxLayout()
-        charts.setSpacing(12)
-        self.gch_month = Chart("bar", "кВт·ч", "Выработка, потребление и отдача в сеть по месяцам")
-        self.gch_cum = Chart("line", "грн", "Накопленная выгода по годам")
-        self.gch_cum.xfmt = "year"
-        for ch in (self.gch_month, self.gch_cum):
-            ch.setMinimumHeight(270)
-            self.charts.append(ch)
-            charts.addWidget(ch, 1)
-        lay.addLayout(charts)
-        self.gtb_month = make_table(["Месяц", "Выработка, кВт·ч", "Потребление", "В сеть (оплата)", "Из сети",
-                                     "Экономия, грн", "Доход, грн"])
-        self.gtb_month.setMinimumHeight(13 * 26 + 34)
-        lay.addWidget(self.gtb_month)
-        lay.addWidget(_lab("Модель: помесячный взаимозачёт по часовой выработке станции (из её расчёта: панели, MPPT, "
-                           "провода, КПД и мощность инвертора). Своё потребление экономит по цене зоны, излишек месяца "
-                           "оплачивается по зелёному тарифу минус налог (до 2029 г.), дальше — по цене продажи после 2029. "
-                           "АКБ не сдвигает энергию на ночь (в расчёте не учтено).", "hint", True))
-        return sa
-
-    # ── вкладка «Смета» ──
-    def _g_tab_budget(self):
-        w = QWidget()
-        w.setContextMenuPolicy(Qt.CustomContextMenu)
-        w.customContextMenuRequested.connect(lambda pos: self._green_menu(w.mapToGlobal(pos)))
-        lay = QHBoxLayout(w)
-        lay.setContentsMargins(2, 10, 8, 8)
-        lay.setSpacing(12)
-        left = QVBoxLayout()
-        left.setSpacing(8)
-        self.gtb_budget = make_table(["✓", "Статья", "Кому платим", "Мин, грн", "Макс, грн"],
-                                     [("🏠 Станция уже есть — оставить только оформление", lambda _r: self._g_only_docs()),
-                                      ("✓ Включить все статьи", lambda _r: self._g_set("excluded", [], True))])
-        self.gtb_budget.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.gtb_budget.horizontalHeader().setStretchLastSection(False)
-        self.gtb_budget.itemChanged.connect(self._g_budget_item)
-        left.addWidget(self.gtb_budget, 1)
-        left.addWidget(_lab("Снимите галочку, если статья уже куплена или входит в цену «под ключ». Станция уже "
-                            "стоит? Правый клик → «Станция уже есть» — в смете останется только оформление.", "hint", True))
-        lay.addLayout(left, 3)
-        rw = QWidget()
-        rw.setContextMenuPolicy(Qt.CustomContextMenu)
-        rw.customContextMenuRequested.connect(lambda pos: self._green_menu(rw.mapToGlobal(pos)))
-        right = QVBoxLayout(rw)
-        right.setContentsMargins(0, 0, 6, 0)
-        right.setSpacing(12)
-        fr, cv = _card("Итого по смете")
-        self.g_total = _lab("—", "kpiVal", True)
-        self.g_total_sub = self._rich()
-        cv.addWidget(self.g_total)
-        cv.addWidget(self.g_total_sub)
-        right.addWidget(fr)
-        fr, cv, grid = self._g_form("Мои цены (если знаю) — всего, грн")
-        self.g_own = {}
-        for key, title in G.OWN_KEYS:
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            st = Stepper(0, 100_000_000, 1000, 0, "грн")
-            st.changed.connect(lambda x, key=key: self._g_own_set(key, float(x)))
-            row.addWidget(st, 1)
-            rb = _btn("↺", "chip", "Вернуть оценку", lambda key=key: self._g_own_set(key, 0.0, True))
-            row.addWidget(rb)
-            box = QWidget()
-            box.setLayout(row)
-            self._g_row(grid, title, box)
-            hint = _lab("", "hint", True)
-            grid.addWidget(hint, grid.rowCount(), 1)
-            self.g_own[key] = (st, rb, hint)
-        self._g_row(grid, "Доп. материалы", self._g_step("extra_mat", 0, 10_000_000, 500, 0, "грн"),
-                    "Ваша сумма: бетон, сетка/забор, болты, кабель-канал — всё, чего нет в смете")
-        ed = QLineEdit()
-        ed.setPlaceholderText("что именно: бетон, забор, болты…")
-        ed.editingFinished.connect(lambda: self._g_set("extra_note", ed.text()[:200]))
-        self.gw["extra_note"] = ed
-        self._g_row(grid, "Что это", ed)
-        right.addWidget(fr)
-        fr, cv = _card("Рынок «под ключ» — ориентиры 2026")
-        self.g_market = self._rich()
-        cv.addWidget(self.g_market)
-        right.addWidget(fr)
-        right.addStretch(1)
-        sa = self._scroll(rw)
-        sa.setMinimumWidth(430)
-        lay.addWidget(sa, 2)
-        return w
-
-    # ── вкладка «Цены» ──
-    def _g_tab_prices(self):
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(2, 10, 8, 8)
-        lay.setSpacing(10)
-        lay.addWidget(_lab("Ориентиры рынка Украины 2026 г. — подставьте цены из своих коммерческих предложений: смета и "
-                           "окупаемость пересчитаются сразу. «Мои цены» на вкладке «Смета» главнее этих диапазонов.",
-                           "hint", True))
-        self.gtb_prices = make_table(["Позиция", "Ед.", "Мин", "Макс"],
-                                     [("↺ Сбросить эту строку", self._g_price_reset_row)])
-        self.gtb_prices.setRowCount(len(G.PRICE_DEFS))
-        self.g_price_w = {}
-        for r, (key, label, unit, _mn, _mx, dec) in enumerate(G.PRICE_DEFS):
-            self.gtb_prices.setItem(r, 0, _item(label))
-            self.gtb_prices.setItem(r, 1, _item(unit))
-            pair = []
-            for col, idx in ((2, 0), (3, 1)):
-                sp = _Spin()
-                sp.setDecimals(dec)
-                sp.setRange(0, 10_000_000)
-                sp.setSingleStep(0.05 if dec else 100)
-                sp.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                sp.setKeyboardTracking(False)
-                sp.setFocusPolicy(Qt.StrongFocus)
-                sp.valueChanged.connect(lambda val, k=key, i=idx: self._g_price_set(k, i, val))
-                self.gtb_prices.setCellWidget(r, col, sp)
-                pair.append(sp)
-            self.g_price_w[key] = pair
-        hh = self.gtb_prices.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in (2, 3):
-            hh.setSectionResizeMode(col, QHeaderView.Fixed)
-            hh.resizeSection(col, 140)
-        hh.setStretchLastSection(False)
-        self.gtb_prices.verticalHeader().setDefaultSectionSize(32)
-        lay.addWidget(self.gtb_prices, 1)
-        row = QHBoxLayout()
-        row.addWidget(_btn("↺ Сбросить цены к ориентирам 2026", None, "Вернуть все диапазоны цен по умолчанию",
-                           self._g_prices_reset))
-        row.addStretch(1)
-        lay.addLayout(row)
-        return w
-
-    # ── вкладка «Солнце (5 лет)» ──
-    def _g_tab_sun(self):
-        sa, lay = self._g_scroll()
-        self.g_sun_hint = self._rich()
-        row = QHBoxLayout()
-        row.addWidget(self.g_sun_hint, 1)
-        row.addWidget(_btn("📍 Загрузить погоду региона", "primary", "Погода за 5 лет для точки станции (Open-Meteo / "
-                                                                     "PVGIS-SARAH3 — выбор на странице 🌐 Данные солнца)",
-                           lambda: self.load_region()))
-        lay.addLayout(row)
-        kp = QGridLayout()
-        kp.setSpacing(10)
-        self.gks = {}
-        for i, (k, cap) in enumerate((("sunday", "Дней с солнцем (≥ 1 ч) в год"), ("clear", "Ясных · пасмурных дней в год"),
-                                      ("hours", "Часов солнца в год"), ("yield", "Выработка на 1 кВт·п в год"))):
-            fr = QFrame()
-            fr.setObjectName("kpi")
-            fv = QVBoxLayout(fr)
-            fv.setContentsMargins(12, 8, 12, 8)
-            fv.setSpacing(0)
-            fv.addWidget(_lab(cap, "kpiCap"))
-            val = _lab("—", "kpiVal")
-            sub = _lab("", "kpiCap", True)
-            fv.addWidget(val)
-            fv.addWidget(sub)
-            self.gks[k] = (val, sub)
-            kp.addWidget(fr, i // 2, i % 2)
-        lay.addLayout(kp)
-        fr, cv = _card("Не 24/7")
-        self.g_sun_note = self._rich()
-        cv.addWidget(self.g_sun_note)
-        lay.addWidget(fr)
-        charts = QHBoxLayout()
-        charts.setSpacing(12)
-        self.gch_days = Chart("bar", "дней", "Погода по месяцам: дней в среднем за 5 лет")
-        self.gch_years = Chart("bar", "кВт·ч", "Выработка станции по годам погоды")
-        for ch in (self.gch_days, self.gch_years):
-            ch.setMinimumHeight(260)
-            self.charts.append(ch)
-            charts.addWidget(ch, 1)
-        lay.addLayout(charts)
-        self.gtb_sun = make_table(["Месяц", "Ясных", "Переменных", "Пасмурных", "Часов солнца", "кВт·ч/м² (гориз.)",
-                                   "На 1 кВт·п, кВт·ч", "Мин – макс"])
-        self.gtb_sun.setMinimumHeight(13 * 26 + 34)
-        lay.addWidget(self.gtb_sun)
-        lay.addWidget(_lab("День «ясный» — пришло ≥ 70 % от ясного неба, «пасмурный» — < 35 %. Час солнца — прямое "
-                           "излучение > 120 Вт/м² (как у метеостанций). Выработка на 1 кВт·п — из расчёта станции "
-                           "(наклон, азимут, нагрев, провода, MPPT, КПД и мощность инвертора), по годам — по солнцу "
-                           "каждого года.", "hint", True))
-        return sa
-
-    # ── вкладка «Документы и шаги» ──
-    def _g_tab_docs(self):
-        w = QWidget()
-        lay = QHBoxLayout(w)
-        lay.setContentsMargins(2, 10, 8, 8)
-        lay.setSpacing(12)
-        left = QVBoxLayout()
-        left.setSpacing(8)
-        self.g_progress = _lab("", "hint")
-        self.g_check = QListWidget()
-        self.g_check.setObjectName("gcheck")
-        self.g_check.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.g_check.customContextMenuRequested.connect(self._g_check_menu)
-        for section, items in G.STEPS:
-            h = QListWidgetItem(section.upper())
-            h.setFlags(Qt.ItemIsEnabled)
-            f = h.font()
-            f.setBold(True)
-            h.setFont(f)
-            h.setData(Qt.UserRole, "")
-            self.g_check.addItem(h)
-            for text in items:
-                it = QListWidgetItem(text)
-                it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
-                it.setCheckState(Qt.Unchecked)
-                it.setData(Qt.UserRole, text)
-                self.g_check.addItem(it)
-        self.g_check.itemChanged.connect(self._g_check_changed)
-        left.addWidget(self.g_progress)
-        left.addWidget(self.g_check, 1)
-        lay.addLayout(left, 3)
-        right = QVBoxLayout()
-        right.setSpacing(12)
-        fr, cv = _card("Памятка")
-        notes = self._rich()
-        notes.setText(G.NOTES_HTML)
-        cv.addWidget(notes)
-        row = QHBoxLayout()
-        for text, url in (("Сайт НКРЭКУ ↗", G.URL_NERC), ("Калькулятор присоединения ↗", G.URL_CONN_CALC),
-                          ("Тариф № 1613 ↗", G.URL_TARIFF_NEWS)):
-            row.addWidget(_btn(text, "chip", url, lambda u=url: QDesktopServices.openUrl(QUrl(u))))
-        row.addStretch(1)
-        cv.addLayout(row)
-        right.addWidget(fr)
-        fr, cv = _card("Мои заметки")
-        self.g_notes = QPlainTextEdit()
-        self.g_notes.setPlaceholderText("Номера заявок, ответы ОСР, контакты установщика…")
-        self.g_notes.textChanged.connect(self._g_notes_changed)
-        cv.addWidget(self.g_notes)
-        right.addWidget(fr, 1)
-        lay.addLayout(right, 2)
-        return w
 
     # ─────────────── значения ───────────────
     def _g_load(self):
@@ -672,7 +743,7 @@ class GreenPages:
     # ─────────────── расчёт и заполнение ───────────────
     def _green_update(self):
         R = getattr(self, "R", None)
-        if R is None or not hasattr(self, "g_tabs"):
+        if R is None or not hasattr(self, "g_secs"):
             return
         s = self.s
         g = s.get("green") or G.green_clean(None)
@@ -715,6 +786,26 @@ class GreenPages:
         self._g_fill_budget(p)
         self._g_fill_sun(p)
         self._g_progress()
+        self._g_fill_sums()
+        QTimer.singleShot(0, self._g_fit_list)
+
+    def _g_fill_sums(self):
+        """Краткий итог на заголовке свёрнутой группы."""
+        D = self._G
+        g, sec = D["g"], self.g_secs
+        conn = {"ok": "мощности хватает", "increase": "увеличить мощность", "new": "нет подключения"}[g["conn"]]
+        sec["place"].sum.setText(f"{D['region']} · {conn}")
+        meter = {"1": "1 зона", "2": "день/ночь", "3": "3 зоны"}[g["meter_zones"]]
+        sec["tariff"].sum.setText(f"{meter} · {G.fnum(g['green'], 3)} грн")
+        ok = D["exp"][0]
+        sec["mount"].sum.setText(("крыша" if g["mount"] == "roof" else "земля") + " · в сеть: "
+                                 + ("да" if ok else "нет" if ok is False else "?"))
+        n = sum(1 for v in g["own"].values() if v > 0) + (1 if g["extra_mat"] > 0 else 0)
+        sec["own"].sum.setText(f"своих: {n}" if n else "оценка")
+        n = sum(1 for k, _l, _u, mn, mx, _d in G.PRICE_DEFS if g["prices"][k] != [float(mn), float(mx)])
+        sec["prices"].sum.setText(f"изменено: {n}" if n else "ориентиры 2026")
+        done = sum(1 for k in G.STEP_KEYS if g["checklist"].get(k))
+        sec["docs"].sum.setText(f"{done} из {len(G.STEP_KEYS)}")
 
     def _g_fill_kpis(self, p):
         D = self._G
@@ -804,41 +895,47 @@ class GreenPages:
         self.g_tariff.setValue(float(self.s["tariff"]))
         self.g_zones.setText(" · ".join(f"{n}: {G.fnum(v, 2)}" for n, v in zip(e["zones"], e["zprices"])) + " грн/кВт·ч")
         self.gw["net_mode"].setEnabled(g["meter_zones"] != "1")
-        ev = self.g_ev
-        ev["gen"].setText(f"{G.fnum(e['gen'])} кВт·ч ({D['gen_src']}); в сеть {G.fnum(e['exp'])}")
+        ev, el = self.g_ev, self.g_el
         idle = sum(sum(r) for r in D["idle"])
-        ev["cons"].setText(f"{G.fnum(e['cons'])} кВт·ч (из них х.х. инвертора {G.fnum(idle)})")
-        ev["zones"].setText(" · ".join(f"{n.split()[0]} {G.fnum(gz)} / {G.fnum(cz)}"
-                                       for n, gz, cz in zip(e["zones"], e["zgen"], e["zcons"])))
-        ev["save"].setText(f"{G.fnum(e['save'])} грн")
+        zones = " · ".join(f"{n.split()[0]}: выработка {G.fnum(gz)}, потребление {G.fnum(cz)} кВт·ч"
+                           for n, gz, cz in zip(e["zones"], e["zgen"], e["zcons"]))
         price_now = g["green"] if e["start"] <= G.GREEN_LAST_YEAR else g["post_price"]
-        ev["inc"].setText(f"{G.fnum(e['inc'])} грн  (до налога {G.fnum(e['gross'])}, по {G.fnum(price_now, 3)} грн)")
-        self.g_el["tax"].setText(f"Налог {G.fkw(g['tax'])} % (удержит поставщик)")
-        ev["tax"].setText(f"{G.fnum(e['tax'])} грн")
-        ev["bill"].setText(f"{G.fnum(e['bill_without'])} → {G.fnum(e['bill_with'])} грн")
-        ev["bgreen"].setText(f"{G.fnum(e['b_green'])} грн × {e['green_years']} "
-                             f"{G.plural(e['green_years'], 'год', 'года', 'лет')}" if e["green_years"] > 0
-                             else "не действует (ввод после 2029)")
-        ev["bgreen"].setStyleSheet(f"color: {self._gc['ok']};")
-        ev["bpost"].setText(f"{G.fnum(e['b_post'])} грн (продажа по {G.fnum(g['post_price'], 2)} грн)")
         yrs = e["years"]
-        if e["pb_min"] is None:
-            pb = f"не окупается за {yrs} лет"
-        else:
-            pb = f"{G.fpb(e['pb_min'], yrs)} – {G.fpb(e['pb_max'], yrs)} лет"
-            if e["pb_mid"] is not None:
-                pb += f"  (в среднем {G.fnum(e['pb_mid'], 1)})"
-        ev["pb"].setText(pb)
-        ev["pb"].setStyleSheet(f"color: {p['accent']};")
-        ev["pbbad"].setText(f"{G.fnum(e['pb_bad'], 1)} г." if e["pb_bad"] is not None else f"> {yrs} лет")
-        self.g_el["profit"].setText(f"Чистая выгода за {yrs} лет (средний бюджет)")
-        ev["profit"].setText(f"{G.fnum(e['profit'])} грн")
-        ev["profit"].setStyleSheet(f"color: {self._gc['ok'] if e['profit'] >= 0 else self._gc['err']};")
         es = D["e_self"]
-        ev["self"].setText(f"{G.fnum(es['benefit'])} грн/год, окупаемость "
-                           + (f"≈ {G.fnum(es['pb_mid'], 1)} г." if es["pb_mid"] is not None else f"> {yrs} лет")
-                           + (" — так сейчас: инвертор не отдаёт в сеть" if D["exp"][0] is False else ""))
-        ev["self"].setStyleSheet(f"color: {self._gc['warn']};" if D["exp"][0] is False else "")
+        no_exp = D["exp"][0] is False
+        pb = (f"не окупается за {yrs} лет" if e["pb_min"] is None
+              else f"{G.fpb(e['pb_min'], yrs)} – {G.fpb(e['pb_max'], yrs)} лет")
+        rows_kv = {
+            "gen": (f"{G.fnum(e['gen'])} кВт·ч", f"Выработка AC за год — {D['gen_src']}.\n{zones}"),
+            "cons": (f"{G.fnum(e['cons'])} кВт·ч", f"Дом + холостой ход инвертора ({G.fnum(idle)} кВт·ч)"),
+            "exp": (f"{G.fnum(e['exp'])} кВт·ч", "Сальдо месяцев в пользу станции — оплачивается"),
+            "save": (f"{G.fnum(e['save'])} грн", "Своя энергия вместо покупки по цене зоны"),
+            "inc": (f"{G.fnum(e['inc'])} грн", f"До налога {G.fnum(e['gross'])} грн, по {G.fnum(price_now, 3)} грн/кВт·ч"),
+            "tax": (f"{G.fnum(e['tax'])} грн", "18 % НДФЛ + 5 % военный сбор — удерживает поставщик"),
+            "bill": (f"{G.fnum(e['bill_without'])} → {G.fnum(e['bill_with'])} грн", "Счёт за свет за год"),
+            "bgreen": (f"{G.fnum(e['b_green'])} × {e['green_years']} г." if e["green_years"] > 0 else "не действует",
+                       "Экономия + доход после налога в год, пока платят зелёный тариф (до 2029 г. включительно)"),
+            "bpost": (f"{G.fnum(e['b_post'])} грн", f"Продажа по {G.fnum(g['post_price'], 2)} грн/кВт·ч"),
+            "pb": (pb, "При мин / макс бюджете; при среднем — "
+                       + (f"{G.fnum(e['pb_mid'], 1)} г." if e["pb_mid"] is not None else f"> {yrs} лет")),
+            "pbbad": (f"{G.fnum(e['pb_bad'], 1)} г." if e["pb_bad"] is not None else f"> {yrs} лет",
+                      "Если каждый год погода как в худший из 5 лет (нужна погода региона)"),
+            "self": (f"{G.fnum(es['benefit'])} грн · " + (f"≈ {G.fnum(es['pb_mid'], 1)} г." if es["pb_mid"] is not None
+                                                         else f"> {yrs} лет"),
+                     "Польза в год и окупаемость, если в сеть не продавать (только своё потребление)"
+                     + (" — так сейчас: инвертор не отдаёт в сеть" if no_exp else "")),
+            "profit": (f"{G.fnum(e['profit'])} грн", "За горизонт расчёта, минус средний бюджет"),
+        }
+        for k, (txt, tip) in rows_kv.items():
+            ev[k].setText(txt)
+            ev[k].setToolTip(tip)
+            el[k].setToolTip(tip)
+        el["tax"].setText(f"Налог {G.fkw(g['tax'])} %")
+        el["profit"].setText(f"Чистая выгода, {yrs} лет")
+        ev["bgreen"].setStyleSheet(f"color: {self._gc['ok']};")
+        ev["pb"].setStyleSheet(f"color: {p['accent']};")
+        ev["profit"].setStyleSheet(f"color: {self._gc['ok'] if e['profit'] >= 0 else self._gc['err']};")
+        ev["self"].setStyleSheet(f"color: {self._gc['warn']};" if no_exp else "")
         rows = e["rows"]
         t = self.gtb_month
         t.setRowCount(13)
@@ -850,6 +947,7 @@ class GreenPages:
         t.setItem(12, 0, _item("За год", bold=True))
         for col, k in enumerate(keys, start=1):
             t.setItem(12, col, _item(G.fnum(sum(r[k] for r in rows)), True, bold=True))
+        self._g_fit(t)
         self.gch_month.set_data([("Выработка", GEN_COL, [r["gen"] for r in rows]),
                                  ("Потребление", CONS_COL, [r["cons"] for r in rows]),
                                  ("В сеть (сальдо)", EXP_COL, [r["exp"] for r in rows])], labels=G.MONTHS_S)
@@ -892,6 +990,7 @@ class GreenPages:
         t.setItem(n, 2, _item(""))
         t.setItem(n, 3, _item(G.fnum(b["mn"]), True, bold=True))
         t.setItem(n, 4, _item(G.fnum(b["mx"]), True, bold=True))
+        self._g_fit(t)
         t.blockSignals(False)
         self._g_loading = False
         self.g_total.setText(f"{G.fnum(b['mn'])} – {G.fnum(b['mx'])} грн")
@@ -971,6 +1070,9 @@ class GreenPages:
             for col, k in enumerate(("sunny", "partly", "cloudy", "sun_h", "ghi", "y_avg"), start=1):
                 t.setItem(12, col, _item(G.fnum(a[k]), True, bold=True))
             t.setItem(12, 7, _item(f"{G.fnum(a['y_min'])} – {G.fnum(a['y_max'])}", True, bold=True))
+            self._g_fit(t)
+        self.gtb_sun.setVisible(sun is not None)
+        self.gch_days.setVisible(sun is not None)
         self.gch_years.set_data([("Выработка", GEN_COL, [v for _l, v in e["year_totals"]])],
                                 labels=[str(lab) for lab, _v in e["year_totals"]])
         kwp = st["kwp"]
@@ -994,9 +1096,12 @@ class GreenPages:
         m.addAction("📋 Копировать итоги", self._green_copy)
         m.addAction("💾 Смета → CSV…", lambda: export_table_csv(self.gtb_budget))
         m.addSeparator()
-        go = m.addMenu("Перейти к вкладке")
-        for i in range(self.g_tabs.count()):
-            go.addAction(self.g_tabs.tabText(i), lambda i=i: self.g_tabs.setCurrentIndex(i))
+        go = m.addMenu("Перейти к")
+        go.addAction("⬆ Наверх", lambda: self.g_right_sa.verticalScrollBar().setValue(0))
+        for key, title in (("budget", "Смета"), ("sun", "Солнце за 5 лет"), ("months", "Расчёт по месяцам")):
+            go.addAction(title, lambda key=key: self._g_goto(key))
+        m.addAction("▾ Развернуть все группы", lambda: self._g_open_all(True))
+        m.addAction("▸ Свернуть все группы", lambda: self._g_open_all(False))
         m.addSeparator()
         m.addAction("🏠 Станция уже есть — в смете только оформление", self._g_only_docs)
         m.addAction("✓ Включить все статьи сметы", lambda: self._g_set("excluded", [], True))
@@ -1005,6 +1110,12 @@ class GreenPages:
         m.addSeparator()
         m.addAction("📍 Загрузить погоду региона за 5 лет", lambda: self.load_region())
         m.addAction("⚙ Настройки станции", lambda: self._go_page(self.page_idx["settings"]))
+        m.exec(gpos)
+
+    def _g_price_menu(self, row, gpos):
+        m = QMenu(self)
+        m.addAction("↺ Сбросить эту строку", lambda: self._g_price_reset_row(row))
+        m.addAction("↺ Все цены — ориентиры 2026", self._g_prices_reset)
         m.exec(gpos)
 
     def _green_copy(self):

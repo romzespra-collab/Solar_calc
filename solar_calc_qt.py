@@ -3,7 +3,7 @@
 
 Журнал:
 v1.10.0: страница «💰 Зелёный тариф» (окупаемость, смета, ОСР, солнце за 5 лет, документы) — после «🔌 Горсеть»;
-         пересчёт, тема, профиль и сброс обновляют её.
+         пересчёт, тема, профиль и сброс обновляют её. Страница «🔀 Сравнение схем S×P» убрана.
 v1.9.7: профиль и config с BOM (Блокнот) открываются; «Настройки сохранены» — только если сохранились; смена
         темы перерисовывает текущую страницу (схемы, угол, провод, погода); сохранить без расширения — добавит
         его; ошибки интерфейса — с трассировкой в файле лога; ручка переключателей — белая в обеих темах.
@@ -106,7 +106,6 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWind
                  ("🌤", "Погода и выработка по прогнозу", "weather", self._page_weather()),
                  ("🌌", "Небо: Солнце, Луна, звёзды над станцией", "sky", self._page_sky()),
                  ("⚙", "Настройки станции", "settings", self._page_settings()),
-                 ("🔀", "Сравнение схем S×P", "schemes", self._page_schemes()),
                  ("📐", "Подбор угла и азимута", "tilt", self._page_tilt()),
                  ("🧵", "Подбор сечения провода", "wire", self._page_wire()),
                  ("🌐", "Данные солнца (PVGIS)", "data", self._page_data()),
@@ -123,7 +122,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWind
             self.side_group.addButton(b, i)
             if i == len(pages) - 1:
                 sv.addStretch(1)
-            if name == "schemes":
+            if name == "tilt":
                 sep = QFrame()
                 sep.setFixedHeight(1)
                 sep.setObjectName("sideSep")
@@ -251,7 +250,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWind
         self._status(f"расчёт {dt:.0f} мс")
         self._wx_place_changed()
         cur = self.page_names[self.stack.currentIndex()]
-        if cur in ("schemes", "tilt", "wire"):
+        if cur in ("tilt", "wire"):
             self._refresh_page(cur)
         elif cur == "data":
             self._fill_data_table()
@@ -266,7 +265,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWind
         if self.R is not None:
             self._show_results()
         cur = self.page_names[self.stack.currentIndex()]
-        if cur in ("schemes", "tilt", "wire"):            # графики и подписи этих страниц — в новых цветах
+        if cur in ("tilt", "wire"):                       # графики и подписи этих страниц — в новых цветах
             self._refresh_page(cur, force=True)
         elif cur in ("weather", "sky"):
             self._wx_refresh()
@@ -368,7 +367,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWind
     def _go_page(self, i):
         self.stack.setCurrentIndex(i)
         name = self.page_names[i]
-        if name in ("schemes", "tilt", "wire"):
+        if name in ("tilt", "wire"):
             self._refresh_page(name)
         elif name == "data":
             self._fill_data_table()
@@ -381,8 +380,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWind
         if not force and self.page_gen.get(i) == self.gen:
             return
         s, sd, gen = dict(self.s), self.sd, self.gen
-        name, job, fill = {"schemes": ("сравнение схем", self._job_schemes, self._fill_schemes),
-                           "tilt": ("подбор угла", self._job_tilt, self._fill_tilt),
+        name, job, fill = {"tilt": ("подбор угла", self._job_tilt, self._fill_tilt),
                            "wire": ("подбор провода", self._job_wire, self._fill_wire)}[i]
 
         def done(res):

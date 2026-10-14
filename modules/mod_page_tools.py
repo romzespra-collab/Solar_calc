@@ -1,7 +1,8 @@
 """mod_page_tools.py  v1.10.0
-страницы «Схемы S×P», «Угол», «Провод», «Данные PVGIS», «Цвета»
+страницы «Угол», «Провод», «Данные PVGIS», «Цвета»
 
 Журнал:
+v1.10.0: страница «Сравнение схем S×P» убрана (схема поля выбирается в конструкторе станции).
 v1.10.0: погода региона — выбор источника (Open-Meteo ERA5 / PVGIS-SARAH3), статистика дней (ясные, пасмурные,
          часы солнца) в карточке и в логе после загрузки.
 v1.9.7: «Провода» → MPPT → АКБ у гибрида с отдельным MPPT: сопротивление и ток отдельного контроллера (было 0).
@@ -17,8 +18,7 @@ from .mod_base import MONTHS, DAYS, log
 from .mod_sun import BUILTIN_SUN
 from .mod_fields import s2d
 from .mod_config import save_config
-from .mod_model import layouts, wire_r, compute_days, year_kwh, ampacity, balance
-from .mod_checks import make_checks
+from .mod_model import wire_r, compute_days, year_kwh, ampacity, balance
 from .mod_pvgis import fetch_pvgis
 from .mod_region import fetch_region, region_years, SOURCES as REG_SOURCES, SRC_NAMES as REG_NAMES
 from .mod_theme import _OK, _ERR, _WARN, SERIES_COL
@@ -28,84 +28,6 @@ from .mod_widgets import (app_name, app_version, Toggle, Segmented, _lab, _card,
 
 class ToolPages:
     """Часть главного окна App (миксин)."""
-
-    def _page_schemes(self):
-        pg, v = self._page()
-        top = QHBoxLayout()
-        top.addWidget(_lab("Сравнение схем при том же числе панелей", "bigTitle"))
-        top.addStretch(1)
-        top.addWidget(_btn("🔄 Пересчитать", "primary", "Пересчитать таблицу", lambda: self._refresh_page("schemes", force=True)))
-        v.addLayout(top)
-        v.addWidget(_lab("Все варианты S×P (и по входам MPPT / контроллерам) для вашего числа панелей: ясный / средний / пасмурный день выбранного месяца и год. "
-                         "Лучший вариант в каждом столбце — зелёный. Частичную тень модель не учитывает: при тени "
-                         "длинные цепочки теряют больше.", "hint", True))
-        fr, cv = _card("Варианты")
-        self.tb_sch = make_table(["Схема", "Vmp, В", "Ток на вход, А", "Voc мороз, В", "Провод, %", "Ясно, Вт·ч",
-                                  "Средне, Вт·ч", "Пасмурно, Вт·ч", "Год, кВт·ч", "Проверки"],
-                                 [("✔ Применить эту схему", self._apply_scheme)])
-        cv.addWidget(self.tb_sch)
-        v.addWidget(fr, 1)
-        return pg
-
-    def _apply_scheme(self, row):
-        it = self.tb_sch.item(row, 0)
-        if not it:
-            return
-        k, ns, np_ = it.data(Qt.UserRole)
-        self.s["n_in"], self.s["ns"], self.s["np"] = k, ns, np_
-        self.s["n_pan"] = k * ns * np_
-        self._refresh_station()
-        log.info(f"✓ Схема {ns}S{np_}P" + (f" на каждый из {k} входов" if k > 1 else "") + " применена")
-        self.recalc()
-
-    def _job_schemes(self, s, sd):
-        m = int(s["month"])
-        rows = []
-        for k, ns, np_ in layouts(int(s["n_pan"]), int(s["n_mppt_max"])):
-            s2 = dict(s, n_in=k, ns=ns, np=np_)
-            c, res = compute_days(s2, sd)
-            checks = make_checks(s2, c, res)
-            worst = "ok"
-            for lvl, _ in checks:
-                if lvl == "err":
-                    worst = "err"
-                elif lvl == "warn" and worst == "ok":
-                    worst = "warn"
-            R20 = wire_r(c, 20)
-            istc = np_ * c["imp"]
-            rows.append(dict(k=k, ns=ns, np=np_, vmp=ns * c["vmp"], i=istc,
-                             voc=ns * c["voc"] * (1 + c["bvoc"] * (float(s["t_min"]) - 25)),
-                             du=istc * R20 / (ns * c["vmp"]) * 100,
-                             clear=res[(m, "clear")]["wh"][8], avg=res[(m, "avg")]["wh"][8],
-                             over=res[(m, "over")]["wh"][8], year=year_kwh(res, "avg"), worst=worst,
-                             msg="; ".join(t for l, t in checks if l in ("err", "warn"))))
-        return rows
-
-    def _fill_schemes(self, rows):
-        t = self.tb_sch
-        t.setRowCount(0)
-        best = {k: max((r[k] for r in rows if r["worst"] != "err"), default=None) for k in ("clear", "avg", "over", "year")}
-        for r in rows:
-            i = t.rowCount()
-            t.insertRow(i)
-            cur = (r["k"], r["ns"], r["np"]) == (int(self.s["n_in"]), int(self.s["ns"]), int(self.s["np"]))
-            name = (f"{r['k']} × " if r["k"] > 1 else "") + f"{r['ns']}S{r['np']}P"
-            it = _item(name + ("  ← сейчас" if cur else ""), bold=cur)
-            it.setData(Qt.UserRole, (r["k"], r["ns"], r["np"]))
-            t.setItem(i, 0, it)
-            t.setItem(i, 1, _item(f"{r['vmp']:.1f}", True))
-            t.setItem(i, 2, _item(f"{r['i']:.1f}", True))
-            t.setItem(i, 3, _item(f"{r['voc']:.0f}", True, _ERR if r["voc"] > float(self.s["v_max"]) else None))
-            t.setItem(i, 4, _item(f"{r['du']:.2f}", True, _ERR if r["du"] > 3 else _WARN if r["du"] > 2 else None))
-            for col, k in ((5, "clear"), (6, "avg"), (7, "over")):
-                good = best[k] is not None and abs(r[k] - best[k]) < 0.5 and r["worst"] != "err"
-                t.setItem(i, col, _item(_fmt(r[k]), True, _OK if good else None, good))
-            good = best["year"] is not None and abs(r["year"] - best["year"]) < 0.05 and r["worst"] != "err"
-            t.setItem(i, 8, _item(_fmt(r["year"]), True, _OK if good else None, good))
-            ic = {"ok": ("✓ норма", _OK), "warn": ("⚠ есть замечания", _WARN), "err": ("✗ нельзя", _ERR)}[r["worst"]]
-            it = _item(ic[0], color=ic[1])
-            it.setToolTip(r["msg"] or "Замечаний нет")
-            t.setItem(i, 9, it)
 
     def _page_tilt(self):
         pg, v = self._page()
