@@ -1,7 +1,9 @@
-"""mod_page_tools.py  v1.9.7
+"""mod_page_tools.py  v1.10.0
 страницы «Схемы S×P», «Угол», «Провод», «Данные PVGIS», «Цвета»
 
 Журнал:
+v1.10.0: погода региона — выбор источника (Open-Meteo ERA5 / PVGIS-SARAH3), статистика дней (ясные, пасмурные,
+         часы солнца) в карточке и в логе после загрузки.
 v1.9.7: «Провода» → MPPT → АКБ у гибрида с отдельным MPPT: сопротивление и ток отдельного контроллера (было 0).
 v1.9.4: «Данные солнца» — погода региона за 5 лет (архив Open-Meteo): загрузить / забыть, сумма солнца по
         годам, колонки в таблице; загрузка сама при выборе погоды «📍 Регион 5 лет».
@@ -18,7 +20,7 @@ from .mod_config import save_config
 from .mod_model import layouts, wire_r, compute_days, year_kwh, ampacity, balance
 from .mod_checks import make_checks
 from .mod_pvgis import fetch_pvgis
-from .mod_region import fetch_region, region_years
+from .mod_region import fetch_region, region_years, SOURCES as REG_SOURCES, SRC_NAMES as REG_NAMES
 from .mod_theme import _OK, _ERR, _WARN, SERIES_COL
 from .mod_widgets import (app_name, app_version, Toggle, Segmented, _lab, _card, _btn, _fmt, Chart,
                           make_table, _item)
@@ -342,15 +344,24 @@ class ToolPages:
         self.pv_info = _lab("", "hint", True)
         cv.addWidget(self.pv_info)
         v.addWidget(fr)
-        y0, y1 = region_years()
-        fr, cv = _card(f"📍 Погода региона — реальная, за {y0}–{y1} (архив Open-Meteo)")
-        cv.addWidget(_lab("Скачает погоду по часам за последние 5 полных лет для широты/долготы станции и посчитает средний "
-                          "день каждого месяца — солнце, облака, температура как было на самом деле. Это погода «📍 Регион 5 лет» "
-                          "в Прогнозе и на других страницах. Нужен интернет один раз, дальше — из config.json.", "hint", True))
+        fr, cv = _card("📍 Погода региона — реальная, за 5 лет")
+        cv.addWidget(_lab("Скачает погоду по часам за 5 полных лет для широты/долготы станции и посчитает средний "
+                          "день каждого месяца — солнце, облака, температура как было на самом деле, а ещё сколько было "
+                          "ясных и пасмурных дней и часов солнца. Это погода «📍 Регион 5 лет» в Прогнозе, на других "
+                          "страницах и в 💰 Зелёном тарифе (разброс выработки по годам). Нужен интернет один раз, дальше — "
+                          "из config.json.", "hint", True))
         row = QHBoxLayout()
         self.btn_reg = _btn("📍 Загрузить погоду региона", "primary", "Скачать погоду за 5 лет для текущей точки",
                             lambda: self.load_region())
         row.addWidget(self.btn_reg)
+        row.addSpacing(12)
+        row.addWidget(_lab("Источник", "fieldLab"))
+        self.seg_reg_src = Segmented(tuple((k, f"{t} · {region_years(src=k)[0]}–{region_years(src=k)[1]}")
+                                           for k, t in REG_SOURCES))
+        self.seg_reg_src.setToolTip("Open-Meteo — реанализ ERA5, последние 5 лет; PVGIS-SARAH3 — спутник, 2019–2023")
+        self.seg_reg_src.setValue(self.cfg.get("region_src", "om"))
+        self.seg_reg_src.changed.connect(self._reg_src)
+        row.addWidget(self.seg_reg_src)
         row.addStretch(1)
         row.addWidget(_btn("🗑 Забыть", "danger", "Удалить погоду региона", self.forget_region))
         cv.addLayout(row)
@@ -407,13 +418,29 @@ class ToolPages:
             near = self.sd.use_reg(float(s["lat"]), float(s["lon"]))
             yh = sum(rg["months"][m]["H"] * DAYS[m] for m in range(12))
             by = " · ".join(f"{y}: {v:.0f}" for y, v in (rg.get("year_h") or {}).items())
-            self.reg_info.setText(f"Загружено {rg.get('stamp', '')} для ({rg['lat']}, {rg['lon']}) за {rg.get('years', '')} "
+            self.reg_info.setText(f"{REG_NAMES.get(rg.get('src', 'om'), '')}: загружено {rg.get('stamp', '')} для "
+                                  f"({rg['lat']}, {rg['lon']}) за {rg.get('years', '')} "
                                   f"({rg.get('days', 0)} дней) · в среднем {yh:.0f} кВт·ч/м² в год"
-                                  + (f"<br>По годам, кВт·ч/м²: {by}" if by else "") + "<br>"
+                                  + (f"<br>По годам, кВт·ч/м²: {by}" if by else "") + "<br>" + self.reg_stats_text(rg) + "<br>"
                                   + ("используется для «📍 Регион 5 лет» ✓" if near else
                                      "<span style='color:#f5b545'>⚠ точка в параметрах другая — загрузите заново</span>"))
         else:
             self.reg_info.setText("Не загружено — «📍 Регион 5 лет» пока считается как «⛅ Средний».")
+
+    def _reg_src(self, k):
+        self.cfg["region_src"] = k
+        save_config(self.cfg)
+        log.info(f"📍 Источник погоды региона: {REG_NAMES.get(k, k)} — нажмите «Загрузить погоду региона»")
+
+    @staticmethod
+    def reg_stats_text(rg):
+        """Ясные / переменные / пасмурные дни и часы солнца за год (среднее за 5 лет) — одной строкой."""
+        st = (rg or {}).get("stats")
+        if not st:
+            return "Ясные и пасмурные дни — загрузите погоду региона заново (появилось в v1.10)."
+        f = lambda k: sum(st[k])
+        return (f"В год в среднем: ясных {f('sunny'):.0f} · переменных {f('partly'):.0f} · пасмурных {f('cloudy'):.0f} "
+                f"дней; с солнцем ≥ 1 ч — {f('sunday'):.0f} дней; часов солнца {f('sun_h'):.0f}")
 
     def _data_edited(self, it):
         r, c = it.row(), it.column()
@@ -470,12 +497,14 @@ class ToolPages:
             save_config(self.cfg)
             yh = sum(rg["months"][m]["H"] * DAYS[m] for m in range(12))
             by = ", ".join(f"{y} — {v:.0f}" for y, v in (rg.get("year_h") or {}).items())
-            log.info(f"✓ Погода региона за {rg['years']} загружена ({rg['lat']}, {rg['lon']}): в среднем {yh:.0f} кВт·ч/м² "
-                     f"в год" + (f" (по годам: {by})" if by else ""))
+            log.info(f"✓ Погода региона за {rg['years']} загружена ({REG_NAMES.get(rg.get('src'), '')}, {rg['lat']}, "
+                     f"{rg['lon']}): в среднем {yh:.0f} кВт·ч/м² в год" + (f" (по годам: {by})" if by else "")
+                     + ". " + self.reg_stats_text(rg))
             self.recalc()
             self._fill_data_table()
 
-        if not self.worker.submit("погода региона за 5 лет", lambda: fetch_region(lat, lon), done):
+        src = self.cfg.get("region_src", "om")
+        if not self.worker.submit("погода региона за 5 лет", lambda: fetch_region(lat, lon, src=src), done):
             self.btn_reg.setEnabled(True)
 
     def forget_region(self):

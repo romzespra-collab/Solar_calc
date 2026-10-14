@@ -1,7 +1,10 @@
-"""mod_config.py  v1.9.9
+"""mod_config.py  v1.10.0
 параметры станции по умолчанию, config.json: загрузка, проверка, сохранение
 
 Журнал:
+v1.10.0: sys["green"] — зелёный тариф (подключение, смета, окупаемость, чек-лист, заметки) с проверкой
+        (mod_green.green_clean); погода региона — статистика дней, кВт·ч/м² по месяцам лет, источник (region_extra_clean);
+        cfg["region_src"] — Open-Meteo / PVGIS-SARAH3.
 v1.9.9: pv_extra[…]["par"] — поле параллельно с полем № на его вход MPPT (1 — поле 1, 2… — другие); выпало
         битое поле — номера ссылок пересчитываются.
 v1.9.7: config.json с BOM (сохранён Блокнотом) читается (utf-8-sig); save_config → True/False; битый config
@@ -38,6 +41,7 @@ from .mod_fields import ALL_FIELDS, INT_KEYS, WIRE_RANGE
 from .mod_model import bank_series
 from .mod_equipment import BATTERY_DB, MPPT_DB
 from .mod_panels import PANEL_DB
+from .mod_green import green_clean
 
 BAT_EXTRA_MAX = 5           # других сборок АКБ (кроме основной)
 PV_EXTRA_MAX = 11           # полей на других входах MPPT инвертора (входов до 12)
@@ -81,11 +85,13 @@ DEFAULT_SYS = dict(                                     # по умолчани�
     cons_pos={}, bat_dod=90, bat_c=0.5, t_bat=15.0, bat_ch=56.8, eta_bat=97, inv_preset='axioma_ismpptbfp11000',
     inv_p=11000, inv_eta=91, inv_idle=75, inv_hours=24, inv_bat_v=48, load_mode='m', load_kwh=1000,
     load_winter=30.0, load_profile='typ', grid_mode='off', back_soc=40.0, tariff=4.32,
-    ser_days=4.0, ser_weather='over', ser_soc0=100.0, t_min=-25.0, t_max=35.0, pt_g=100.0, pt_t=0.0, fc_soc0=70.0)
+    ser_days=4.0, ser_weather='over', ser_soc0=100.0, t_min=-25.0, t_max=35.0, pt_g=100.0, pt_t=0.0, fc_soc0=70.0,
+    green=green_clean(None))
 
 
 DEFAULT_CONFIG = {"theme": "dark", "geometry": "", "sys": dict(DEFAULT_SYS),
                   "builtin": [list(x) for x in BUILTIN_SUN], "pvgis": None, "use_pvgis": True, "region": None,
+                  "region_src": "om",
                   "last_dir": "", "weather": {"on": True, "model": "best_match", "poll": 30},
                   "sky": {"names": True, "stars": True, "anim": True}}
 
@@ -164,6 +170,7 @@ def clean_sys(d):
     out["cons_pos"] = pos
     out["n_in"] = min(out["n_in"], out["n_mppt_max"])
     out["n_pan"] = out["n_in"] * out["ns"] * out["np"]      # количество панелей = входы × S × P
+    out["green"] = green_clean(d.get("green"))              # зелёный тариф: подключение, смета, окупаемость, шаги
     return out
 
 
@@ -179,6 +186,27 @@ def profile_ok(rg, keys):
                         and _num(d["H"]) and _num(d["T"]) and _num(d.get("shift", 0.0)) for d in rg["months"]))
     except Exception:
         return False
+
+
+def region_extra_clean(rg):
+    """Погода региона: статистика дней (stats), кВт·ч/м² по месяцам лет (month_year), источник (src) — из
+    config.json; негодное — убрать (средние дни остаются)."""
+    st = rg.get("stats")
+    if st is not None and not (isinstance(st, dict) and all(
+            isinstance(st.get(k), list) and len(st[k]) == 12 and all(_num(x) for x in st[k])
+            for k in ("sunny", "partly", "cloudy", "sunday", "sun_h", "ghi"))):
+        rg.pop("stats", None)
+    my = rg.get("month_year")
+    if my is not None and not (isinstance(my, dict) and all(
+            isinstance(k, str) and isinstance(v, list) and len(v) == 12 and all(_num(x) and x >= 0 for x in v)
+            for k, v in my.items())):
+        rg.pop("month_year", None)
+    yh = rg.get("year_h")
+    if yh is not None and not (isinstance(yh, dict) and all(isinstance(k, str) and _num(v) for k, v in yh.items())):
+        rg.pop("year_h", None)
+    if rg.get("src") not in ("om", "pvgis"):
+        rg["src"] = "om"
+    return rg
 
 
 def _pv_ok(pv):
@@ -220,6 +248,10 @@ def load_config():
     if cfg.get("region") is not None and not profile_ok(cfg["region"], ("ghi", "dhi", "t")):
         log.warning("⚠ Погода региона в config.json повреждена — сброшена, загрузится заново")
         cfg["region"] = None
+    if cfg.get("region") is not None:
+        cfg["region"] = region_extra_clean(cfg["region"])
+    if cfg.get("region_src") not in ("om", "pvgis"):
+        cfg["region_src"] = "om"
     for key, types in (("weather", {"on": bool, "model": str, "poll": int}), ("sky", {"names": bool, "stars": bool, "anim": bool})):
         got = cfg.get(key) if isinstance(cfg.get(key), dict) else {}
         d = dict(DEFAULT_CONFIG[key])

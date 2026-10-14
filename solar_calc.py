@@ -1,4 +1,4 @@
-"""solar_calc.py  v1.9.16
+"""solar_calc.py  v1.10.0
 Солнечный калькулятор — точка входа: авто-установка библиотек, запуск окна, --selftest.
 Расчёт: солнце → угол/азимут → панели → схема Ns×Np → провод и контакты → MPPT (встроенный в инвертор
 или отдельный) → ток заряда → АКБ → инвертор. Данные солнца: встроенные (≈Киев) или PVGIS.
@@ -9,9 +9,16 @@
   solar_calc_qt.py      главное окно
   modules/mod_*.py      расчёт, данные, оборудование, виджеты, страницы
   modules/panels_db.tsv.gz  полная база панелей (CEC + паспорта серий)
-  modules/mod_region.py погода региона за 5 лет (архив Open-Meteo)
+  modules/mod_region.py погода региона за 5 лет (Open-Meteo / PVGIS-SARAH3)
+  modules/mod_green.py  зелёный тариф (Украина): смета, ОСР, взаимозачёт, окупаемость; страница — mod_page_green
 
 Журнал:
+v1.10.0: страница «💰 Зелёный тариф» — из «Калькулятора зелёного тарифа» v1.2.0, связана со станцией: панели,
+        инвертор, АКБ, часовая выработка и потребление дома — из ⚙ Настроек (не вводятся второй раз). Вкладки:
+        подключение и проверки (область/ОСР авто по координатам, ставки НКРЭКУ 2026, экспорт по модели
+        инвертора), окупаемость (зоны 1/2/3, взаимозачёт, налог, тариф до 2030, деградация, худший год погоды,
+        без продажи), смета, цены, солнце за 5 лет, документы и шаги; отчёт HTML, CSV. Погода региона:
+        источник PVGIS-SARAH3, ясные / пасмурные дни, часы солнца, солнце по месяцам каждого года.
 v1.9.16: инверторы Deye — 50 моделей (+35): однофазные 3–10 кВт (SG04LP1, SG05LP1, SG05LP1-SM2, SG02LP1),
         3K на 24 В, автономные OG01LP1, трёхфазные SG05LP3-SM2 3–20 кВт.
 v1.9.15: в базе панелей — Jinko 48HL4M-DB 450–475, Resun RSM180M; Trina NEG19RC.20 595–625 по паспорту 2024B.
@@ -78,7 +85,7 @@ v1.1.0: инвертор, провода к АКБ и инвертору, акк
 v1.0.0: первая версия — солнце (встроенное + PVGIS), схемы Ns×Np, провод, окно MPPT, потери по этапам.
 """
 APP_NAME = "Солнечный калькулятор"
-VERSION = "1.9.16"
+VERSION = "1.10.0"
 
 import sys
 import os
@@ -173,7 +180,8 @@ MODULES = ("modules.mod_base", "modules.mod_panels", "modules.mod_equipment", "m
            "modules.mod_pvgis", "modules.mod_theme", "modules.mod_widgets", "modules.mod_page_settings",
            "modules.mod_page_results", "modules.mod_page_tools", "modules.mod_astro", "modules.mod_stars",
            "modules.mod_weather", "modules.mod_forecast", "modules.mod_wx_draw", "modules.mod_sky",
-           "modules.mod_page_sky", "modules.mod_constructor", "modules.mod_region", "solar_calc_qt")
+           "modules.mod_page_sky", "modules.mod_constructor", "modules.mod_region", "modules.mod_green",
+           "modules.mod_page_green", "solar_calc_qt")
 
 
 def _excepthook(tp, val, tb):
@@ -216,6 +224,18 @@ def selftest():
         cfg = json.loads(json.dumps(DEFAULT_CONFIG))
         R = compute_all(dict(DEFAULT_SYS), SunData(cfg))
         lines.append(f"Расчёт: год {R['year']['avg']:.0f} кВт·ч, декабрь средне {R['res'][(11, 'avg')]['wh'][8]:.0f} Вт·ч/сут: OK")
+        from modules import mod_green as G
+        s = dict(DEFAULT_SYS)
+        g = G.green_clean(None)
+        st = G.station_info(R["ctx"], s)
+        b = G.calc_budget(g, st, G.place_of(g, s)[1], False)
+        house, idle = G.cons_bins(R["ctx"])
+        cons = [[house[m][h] + idle[m][h] for h in range(24)] for m in range(12)]
+        e = G.calc_econ(g, float(s["tariff"]), b, G.gen_bins(R, "avg"), G.year_factors(None, False), cons)
+        if not (b["mn"] > 0 and e["gen"] > 0 and len(e["cum"]) == g["years"]):
+            raise RuntimeError("пустой расчёт")
+        pb = f"{G.fnum(e['pb_mid'], 1)} г." if e["pb_mid"] is not None else f"> {e['years']} лет"
+        lines.append(f"Зелёный тариф: бюджет {G.frange(b['mn'], b['mx'])}, окупаемость {pb}: OK")
     except Exception as e:
         ok = False
         lines.append(f"Расчёт: ОШИБКА {e}")

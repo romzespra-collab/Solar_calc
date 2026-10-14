@@ -1,7 +1,8 @@
-"""mod_widgets.py  v1.9.7
+"""mod_widgets.py  v1.10.0
 виджеты Qt: Toggle, Segmented, Stepper, график Chart, таблицы с меню
 
 Журнал:
+v1.10.0: Chart — ось лет (xfmt="year"), горизонтальные пунктиры hlines (напр. «вложения» на графике выгоды).
 v1.9.7: _btn вызывает слот без аргумента checked (он попадал в lambda x=… и ломал «🗑 Убрать»); Toggle рисует
         ручку своим цветом; убрана пустая _menu_style.
 v1.9.0: PresetPicker(vertical=True) — поля друг под другом (боковая панель конструктора).
@@ -535,6 +536,7 @@ class Chart(QWidget):
         self.ydec = 0
         self.xfmt = "hour"
         self.markers = []        # [(x, подпись, цвет)]
+        self.hlines = []         # [(y, подпись, цвет)] — горизонтальные пунктиры (напр. «вложения»)
         self.ymax_fixed = None
         self.setMouseTracking(True)
         self.setMinimumHeight(220)
@@ -561,7 +563,7 @@ class Chart(QWidget):
     def _ymax(self):
         if self.ymax_fixed:
             return self.ymax_fixed
-        vals = [v for _, _, s in self.series for v in s]
+        vals = [v for _, _, s in self.series for v in s] + [y for y, _l, _c in self.hlines]
         return _nice(max(vals) * 1.08) if vals and max(vals) > 0 else 1.0
 
     def paintEvent(self, e):
@@ -611,6 +613,8 @@ class Chart(QWidget):
             span = max(1e-6, self.xmax - self.xmin)
             if self.xfmt == "deg":
                 step = 10 if span > 40 else 5
+            elif self.xfmt == "year":
+                step = 1 if span <= 12 else 5
             else:
                 step = 1 if span <= 8 else 2 if span <= 16 else 3 if span <= 30 else 6 if span <= 80 else 12
             h = math.ceil(self.xmin)
@@ -618,7 +622,8 @@ class Chart(QWidget):
                 xx = r.left() + (h - self.xmin) / span * r.width()
                 if int(h) % step == 0:
                     pa.setPen(muted)
-                    lab = f"{int(h)}°" if self.xfmt == "deg" else f"{int(h) % 24}:00"
+                    lab = (f"{int(h)}°" if self.xfmt == "deg" else str(int(h)) if self.xfmt == "year"
+                           else f"{int(h) % 24}:00")
                     pa.drawText(QRectF(xx - 20, r.bottom() + 4, 40, 16), Qt.AlignCenter, lab)
                 h += 1
             for name, col, vals in self.series:
@@ -649,6 +654,12 @@ class Chart(QWidget):
                     pa.setBrush(Qt.NoBrush)
                     pa.setPen(QPen(QColor(col), 2))
                     pa.drawPath(path)
+            for hy, hlab, hcol in self.hlines:
+                yy = r.bottom() - hy / ymax * r.height()
+                pa.setPen(QPen(QColor(hcol), 1.5, Qt.DashLine))
+                pa.drawLine(QPointF(r.left(), yy), QPointF(r.right(), yy))
+                pa.setPen(QColor(hcol))
+                pa.drawText(QPointF(r.left() + 6, yy - 5), hlab)
             for mx, mlab, mcol in self.markers:
                 if self.xmin <= mx <= self.xmax:
                     xx = r.left() + (mx - self.xmin) / span * r.width()
@@ -663,7 +674,7 @@ class Chart(QWidget):
                 pa.drawLine(QPointF(xx, r.top()), QPointF(xx, r.bottom()))
                 idx = min(range(len(self.xs)), key=lambda i: abs(self.xs[i] - xv))
                 hh = self.xs[idx]
-                lines = [f"{hh:g}°" if self.xfmt == "deg" else
+                lines = [f"{hh:g}°" if self.xfmt == "deg" else f"год {hh:g}" if self.xfmt == "year" else
                          (f"день {int(hh // 24) + 1}, " if self.xmax > 25 else "") + fmt_t(hh)]
                 lines += [f"{n}: {_fmt(v[idx], self.ydec)} {self.unit}" for n, _, v in self.series]
                 self._tip_box(pa, xx, r, lines)
@@ -727,11 +738,12 @@ class Chart(QWidget):
         names = [n for n, _, _ in self.series]
         rows = []
         if self.kind == "line":
-            deg, multi = self.xfmt == "deg", self.xmax > 25
-            rows.append("\t".join(["Угол" if deg else "Время"] + names))
+            deg, yr, multi = self.xfmt == "deg", self.xfmt == "year", self.xmax > 25
+            rows.append("\t".join(["Угол" if deg else "Год" if yr else "Время"] + names))
             for i, xv in enumerate(self.xs):
                 if self.xmin <= xv <= self.xmax:
-                    x = f"{xv:g}°" if deg else (f"день {int(xv // 24) + 1} " if multi else "") + fmt_t(xv)
+                    x = (f"{xv:g}°" if deg else f"{xv:g}" if yr else
+                         (f"день {int(xv // 24) + 1} " if multi else "") + fmt_t(xv))
                     rows.append("\t".join([x] + [f"{s[i]:.1f}".replace(".", ",") for _, _, s in self.series]))
         else:
             rows.append("\t".join([""] + names))

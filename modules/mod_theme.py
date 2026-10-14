@@ -1,7 +1,9 @@
-"""mod_theme.py  v1.9.4
+"""mod_theme.py  v1.10.0
 палитры тёмной/светлой темы и QSS для всех окон и диалогов
 
 Журнал:
+v1.10.0: вкладки (QTabWidget/QTabBar — подчёркивание цветом акцента), галочки в списках и таблицах (видны в
+         обеих темах: рамка, заливка акцентом и белая галочка).
 v1.9.4: цвет графиков для погоды «Регион 5 лет».
 v1.9.2: боковая панель конструктора — фон темнее, поля ввода светлее и с рамкой (различимы в обеих темах).
 v1.9.0: конструктор станции — кнопки шагов (цвет по проверке), боковая панель настроек узла.
@@ -9,7 +11,34 @@ v1.5.0: строки списка в окне поиска — с отступа
 v1.3.0: вынесено из solar_calc.pyw v1.2.1 (программа была одним файлом)
 """
 
+import os
+import tempfile
 
+_CHECK_PNG = None
+
+
+def _check_png():
+    """Белая галочка для QSS (::indicator:checked) — рисуется один раз во временную папку."""
+    global _CHECK_PNG
+    if _CHECK_PNG is not None:
+        return _CHECK_PNG
+    _CHECK_PNG = ""
+    try:
+        from PySide6.QtCore import Qt, QPointF
+        from PySide6.QtGui import QImage, QPainter, QPen, QColor
+        img = QImage(32, 32, QImage.Format_ARGB32)
+        img.fill(Qt.transparent)
+        qp = QPainter(img)
+        qp.setRenderHint(QPainter.Antialiasing)
+        qp.setPen(QPen(QColor("#ffffff"), 4.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        qp.drawPolyline([QPointF(7, 16.5), QPointF(13.5, 23), QPointF(25, 9.5)])
+        qp.end()
+        fn = os.path.join(tempfile.gettempdir(), "solar_calc_check.png")
+        if img.save(fn, "PNG"):
+            _CHECK_PNG = fn.replace("\\", "/")
+    except Exception:
+        _CHECK_PNG = ""
+    return _CHECK_PNG
 
 
 _QT_THEMES = {
@@ -29,6 +58,8 @@ def _qss(p):
     light = int(p["bg"][1:3], 16) > 128
     inp = "#ffffff" if light else "#2f3440"               # поля ввода в боковой панели конструктора — светлее фона
     inp_line = "#c9ced8" if light else "#454c5c"
+    ck = _check_png()
+    ck_img = f"image: url({ck});" if ck else ""
     return f"""
 * {{ font-family: "Segoe UI"; font-size: 10pt; color: {p['text']}; }}
 QMainWindow, QWidget#root {{ background: {p['bg']}; }}
@@ -115,5 +146,20 @@ QFileDialog QListView, QFileDialog QTreeView {{ background: {p['panel2']}; }}
 QDialog QListWidget::item {{ padding: 4px 6px; border-radius: 5px; color: {p['text']}; }}
 QDialog QListWidget::item:hover {{ background: {p['panel2']}; }}
 QDialog QListWidget::item:selected {{ background: {p['accent']}; color: #ffffff; }}
+QTabWidget::pane {{ border: none; border-top: 1px solid {p['line']}; background: {p['bg']}; }}
+QTabWidget > QStackedWidget > QWidget {{ background: {p['bg']}; }}
+QTabBar {{ background: transparent; }}
+QTabBar::tab {{ background: transparent; color: {p['muted']}; border: none; border-bottom: 2px solid transparent;
+    padding: 7px 14px; margin-right: 2px; font-weight: 600; }}
+QTabBar::tab:hover {{ color: {p['text']}; border-bottom-color: {p['line']}; }}
+QTabBar::tab:selected {{ color: {p['text']}; border-bottom-color: {p['accent']}; }}
+QAbstractItemView::indicator, QCheckBox::indicator {{ width: 15px; height: 15px; border: 1px solid {inp_line};
+    border-radius: 4px; background: {inp}; }}
+QAbstractItemView::indicator:hover, QCheckBox::indicator:hover {{ border-color: {p['accent']}; }}
+QAbstractItemView::indicator:checked, QCheckBox::indicator:checked {{ background: {p['accent']};
+    border-color: {p['accent']}; {ck_img} }}
+QListWidget#gcheck::item {{ padding: 5px 6px; border-radius: 5px; }}
+QListWidget#gcheck::item:hover {{ background: {p['panel2']}; }}
+QListWidget#gcheck::item:selected {{ background: {p['panel2']}; color: {p['text']}; }}
 QFileDialog QToolButton {{ background: {p['panel2']}; border: 1px solid {p['line']}; border-radius: 6px; padding: 3px; }}
 """

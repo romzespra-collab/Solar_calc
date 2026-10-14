@@ -1,7 +1,9 @@
-"""solar_calc_qt.py  v1.9.7
+"""solar_calc_qt.py  v1.10.0
 Главное окно программы (PySide6): боковая панель, страницы, лог, статус.
 
 Журнал:
+v1.10.0: страница «💰 Зелёный тариф» (окупаемость, смета, ОСР, солнце за 5 лет, документы) — после «🔌 Горсеть»;
+         пересчёт, тема, профиль и сброс обновляют её.
 v1.9.7: профиль и config с BOM (Блокнот) открываются; «Настройки сохранены» — только если сохранились; смена
         темы перерисовывает текущую страницу (схемы, угол, провод, погода); сохранить без расширения — добавит
         его; ошибки интерфейса — с трассировкой в файле лога; ручка переключателей — белая в обеих темах.
@@ -36,10 +38,11 @@ from modules.mod_page_settings import SettingsPage
 from modules.mod_page_results import ResultsPages
 from modules.mod_page_tools import ToolPages
 from modules.mod_page_sky import SkyPages
+from modules.mod_page_green import GreenPages
 from modules.mod_weather import WeatherState
 
 
-class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
+class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWindow):
     """Главное окно: каркас, пересчёт, тема, лог, профили. Страницы — в modules/mod_page_*.py."""
 
     def __init__(self):
@@ -99,6 +102,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
         pages = [("📊", "Прогноз выработки", "forecast", self._page_forecast()),
                  ("🏠", "Покрытие дома: хватит ли станции", "home", self._page_home()),
                  ("🔌", "Когда переходить на горсеть", "grid", self._page_grid()),
+                 ("💰", "Зелёный тариф: окупаемость, смета, документы", "green", self._page_green()),
                  ("🌤", "Погода и выработка по прогнозу", "weather", self._page_weather()),
                  ("🌌", "Небо: Солнце, Луна, звёзды над станцией", "sky", self._page_sky()),
                  ("⚙", "Настройки станции", "settings", self._page_settings()),
@@ -253,6 +257,8 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
             self._fill_data_table()
         elif cur in ("weather", "sky"):
             self._wx_refresh()
+        elif cur == "green":
+            self._green_update()
 
     def _set_theme(self, k):
         self.cfg["theme"] = k
@@ -264,6 +270,8 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
             self._refresh_page(cur, force=True)
         elif cur in ("weather", "sky"):
             self._wx_refresh()
+        elif cur == "green":
+            self._green_update()
 
     def _p(self):
         return _QT_THEMES.get(self.cfg.get("theme", "dark"), _QT_THEMES["dark"])
@@ -366,6 +374,8 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
             self._fill_data_table()
         elif name in ("weather", "sky"):
             self._wx_refresh()
+        elif name == "green":
+            self._green_update()
 
     def _refresh_page(self, i, force=False):
         if not force and self.page_gen.get(i) == self.gen:
@@ -407,6 +417,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
         self.s.clear()
         self.s.update(DEFAULT_SYS)
         self._load_fields()
+        self._g_load()
         log.info("↺ Параметры сброшены")
         self.recalc()
 
@@ -441,6 +452,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, QMainWindow):
             self.s.update(new)
             self.cfg["last_dir"] = str(Path(fn).parent)
             self._load_fields()
+            self._g_load()
             log.info(f"✓ Профиль загружен: {fn}")
             self.recalc()
         except Exception as e:
