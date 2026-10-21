@@ -279,11 +279,14 @@ class UpdateBox(QGroupBox):
             "Ставит только по вашей кнопке.\nНажать — включить / выключить."
             % self.cb_every.currentText())
         self.ch_auto.setText(("✓ " if on else "✗ ") + "Проверять автоматически")
+        th = _theme()
+        off = (getattr(th, "BG_PANEL", "") or "#3a3f46",
+               getattr(th, "TEXT_DIM", "") or "#c9ced4",
+               getattr(th, "BORDER", "") or "#4a5058")
         self.ch_auto.setStyleSheet(
             "QPushButton{background:%s;color:%s;border:1px solid %s;"
             "border-radius:3px;padding:4px 8px;}"
-            % (("#1e8f4e", "#ffffff", "#25a85c") if on
-               else ("#3a3f46", "#c9ced4", "#4a5058")))
+            % (("#1e8f4e", "#ffffff", "#25a85c") if on else off))
 
     def _auto_toggled(self, on):
         self._auto_look()

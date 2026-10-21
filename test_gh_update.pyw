@@ -6,11 +6,33 @@ sys.path.insert(0, sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import gh_update as gu
 
+_KEEP = []                       # QApplication живёт до os._exit
+
 
 class R(io.BytesIO):
     headers = {}
     def __enter__(self): return self
     def __exit__(self, *a): return False
+
+
+def t_changelog():
+    log = "История\n\n4.92:\n  б\n\n4.91 (= мини 1):\n  а\n\n4.90:\n  старое\n"
+    new = gu.changelog_since(log, "4.90")
+    assert "4.92" in new and "4.91" in new and "старое" not in new, new
+    pyw = '"""prog\n\nv1.2.0: новое\n  деталь\nv1.1.0: старое\n"""\nimport os\n'
+    assert gu.changelog_since(pyw, "1.1.0") == "v1.2.0: новое\n  деталь"
+    tail = '"""prog\nv1.0.0: старое\nv1.1.0: новое\n"""\nimport os\nx = 1\n'
+    assert gu.changelog_since(tail, "1.0.0") == "v1.1.0: новое", gu.changelog_since(tail, "1.0.0")
+    md = "# Журнал\n\n## v2.0.1 — фикс\n- а\n\n## v2.0.0\n- б\n"
+    assert gu.changelog_since(md, "2.0.0").startswith("## v2.0.1")
+    ru = "Версия 3.1 — новое\n  а\nВерсия 3.0 — старое\n"
+    assert gu.changelog_since(ru, "3.0") == "Версия 3.1 — новое\n  а"
+    one = "v436: плеер\n  а\nv435: старое\n"
+    assert gu.changelog_since(one, "435") == "v436: плеер\n  а"
+    assert gu.changelog_since("436 строк кода:\n", "1") == ""
+    assert gu.changelog_since("Изменения 2.2:\n  а\nИзменения 2.1:\n  б\n", "2.1") == "Изменения 2.2:\n  а"
+    body = "1.2:\n  поднял порт 8080 до 1.2.3 мегабит\n"
+    assert "8080" in gu.changelog_since(body, "1.1")
 
 
 def t_versions():
@@ -83,7 +105,7 @@ def t_check_download():
 
 def t_qt(shots=None):
     from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication([])
+    _KEEP.append(QApplication.instance() or QApplication([]))
     import gh_update_qt as q
     from gh_update_help import TokenHelpDialog, step_for_error
     q.set_colors(lambda: {"accent": "#2f81f7", "text": "#e6edf3", "dim": "#8b949e",
@@ -115,9 +137,10 @@ def t_qt(shots=None):
 if __name__ == "__main__":
     shots = os.environ.get("SHOTS")
     bad = 0
-    for f in (t_versions, t_install, t_check_download, lambda: t_qt(shots)):
+    for f in (t_changelog, t_versions, t_install, t_check_download, lambda: t_qt(shots)):
         try:
             f(); print("OK  ", getattr(f, "__name__", "qt"))
         except Exception as e:
             bad += 1; print("FAIL", getattr(f, "__name__", "qt"), repr(e))
-    sys.exit(1 if bad else 0)
+    sys.stdout.flush()
+    os._exit(1 if bad else 0)        # без разрушения Qt-объектов при выходе (segfault)

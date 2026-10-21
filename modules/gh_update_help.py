@@ -9,6 +9,8 @@
     show_token_help(parent, owner="romzespra-collab", repo="Smart_BMS",
                     app_name="Smart_BMS")
 """
+import os
+
 from PySide6.QtCore import QRectF, Qt, QUrl
 from PySide6.QtGui import (QColor, QDesktopServices, QFont, QGuiApplication,
                            QPainter, QPainterPath, QPen)
@@ -457,7 +459,7 @@ def _steps(owner, repo, app_name, target=None):
              ("pair", "нет связи с GitHub", 0, "интернет / прокси / антивирус"),
              ("pair", "нет папки release / нет архивов / версия внутри не та", 0,
               "шаг 8: как должен лежать проект"),
-         ], url="(это окно программы)")),
+         ], url="(это окно программы)", h=340)),
         _layout_step(owner, repo, target),
     ]
 
@@ -471,6 +473,14 @@ def _layout_step(owner, repo, t):
     cl = getattr(t, "changelog", "") or ""
     src = cl.rsplit("/", 1)[0] if "/" in cl else ""
     ver = getattr(t, "current", "") or "1.0"
+    vfs = tuple(getattr(t, "version_files", ()) or ())
+    if vfs:
+        vf = vfs[0]
+    elif t is None or os.path.exists(os.path.join(getattr(t, "app_dir", "") or ".",
+                                                  "app", "version.py")):
+        vf = "app/version.py"
+    else:
+        vf = main
     nv = ".".join(ver.split(".")[:-1] + [str(int(ver.split(".")[-1]) + 1)]) \
         if ver.split(".")[-1].isdigit() else ver
     C, D, G = "#0969da", _DIM, _GREEN
@@ -479,18 +489,19 @@ def _layout_step(owner, repo, t):
         tree += [("├─ %s/          ← исходники программы" % src, None, 0),
                  ("│   ├─ %s" % main, None, 0),
                  ("│   ├─ CHANGELOG.txt     ← «Что нового»: разделы «%s:»" % nv, None, 4),
-                 ("│   └─ app/version.py    APP_VERSION = \"%s\"" % nv, None, 0)]
+                 ("│   └─ %s    VERSION = \"%s\"" % (vf, nv), None, 0)]
     tree += [("└─ release/                 ← ровно так, в корне репозитория", G, 2),
              ("    └─ %s_v%s.zip     ← берётся самый новый номер" % (name, nv), G, 3),
-             ("        └─ %s/  %s, app/version.py" % (name, main), D, 0)]
+             ("        └─ %s/  %s" % (name, main if vf == main else main + ", " + vf),
+              D, 0)]
     return (
         "Где должен лежать проект на GitHub",
         "Программа берёт обновление из <b>release/</b> в корне репозитория "
         "<b>%s/%s</b>, ветка <b>%s</b>. Архив — <b>%s_vX.Y.Z.zip</b> (номер "
         "только цифрами). Внутри — папка <b>%s/</b> с <b>%s</b> и "
-        "<b>app/version.py</b>; номер в нём = номеру в имени архива, иначе "
-        "установка отменится. Старые архивы можно удалять." % (
-            owner, repo, branch, name, name, main),
+        "номером версии в <b>%s</b>; он должен совпадать с номером в имени "
+        "архива, иначе установка отменится. Старые архивы можно удалять." % (
+            owner, repo, branch, name, name, main, vf),
         _Mock("Репозиторий на GitHub", [
             ("code", "", 0, tree),
             ("note", "Собрать архив (из корня репозитория):", 0),

@@ -1,7 +1,8 @@
-"""solar_calc_qt.py  v1.11.0
+"""solar_calc_qt.py  v1.11.1
 Главное окно программы (PySide6): боковая панель, страницы, лог, статус.
 
 Журнал:
+v1.11.1: «Что нового» на странице «🔄 Обновление» — из журнала в шапке solar_calc.py (gh_update 1.1.1).
 v1.11.0: страница «🔄 Обновление» (общий модуль gh_update: токен, ветка, автопроверка, «Что нового», перезапуск) —
          внизу боковой панели над «🎨 Цвета»; создаётся при запуске (автопроверка идёт сама); новая версия —
          «⬆» на кнопке страницы и «⬆ X.Y.Z» в строке состояния (клик — открыть страницу).
@@ -179,7 +180,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWind
                                          "border": self._p()["line"]})
         target = gh_update.UpdateTarget(
             owner="romzespra-collab", repo="Solar_calc", name="solar_calc", current=app_version(),
-            app_dir=str(APP_ROOT), main_file="solar_calc.pyw", changelog="",
+            app_dir=str(APP_ROOT), main_file="solar_calc.pyw", changelog="solar_calc.py",
             version_files=("solar_calc.py",), where="боковая панель → 🔄 Обновление")
         c = self.cfg
 

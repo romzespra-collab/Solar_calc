@@ -25,6 +25,8 @@
 wait_previous(sys.argv) — ждёт, пока старая завершится (иначе защита от
 второго запуска приняла бы её за «уже запущено»).
 
+1.1.1: «Что нового» понимает и заголовки «v1.2.3: …», «## v1.2.3», «Версия
+1.2.3 — …»; инструкция показывает настоящий файл с номером версии.
 1.1.0: version_files — где искать номер версии в архиве (кроме
 app/version.py, version.py, VERSION и главного файла); where — где в
 программе вкладка (для инструкции); работает и как пакет (app/), и как
@@ -50,7 +52,7 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass, field
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 API = "https://api.github.com"
 TIMEOUT = 30
 
@@ -242,12 +244,20 @@ def whats_new(t, token, upto=None, limit=6000):
 
 
 def changelog_since(text, current, upto=None, limit=6000):
-    head = re.compile(r"^(\d+(?:\.\d+)+)\b[^\n]*:\s*$")
+    # «4.90:», «6.63.45 (= полная 4.90):», «v1.2.3: текст», «## v1.2.3 — …»,
+    # «# v1.2.3: …» (журнал в шапке .pyw), «Версия 1.2.3 — …»
+    # одно число («v436:») — только с «v»/«Версия» впереди
+    head = re.compile(r"^(?:#{1,4}\s*|\[)?(?:(?:[vV]|(?:[Вв]ерсия|[Ии]зменения(?:\s+в)?)\s+v?)(\d+(?:\.\d+)*)|"
+                      r"(\d+(?:\.\d+)+))\b"
+                      r"(?:[^\n]*:\s*$|\]?\s*(?:[:—–(-]|\s*$))")
     out, take = [], False
+    stop = re.compile(r'^\s*("""|\'\'\'|import |from \S+ import |def |class )')
     for line in text.splitlines():
+        if take and stop.match(line):          # журнал в шапке .pyw — дальше код
+            break
         m = head.match(line)
         if m:
-            v = m.group(1)
+            v = m.group(1) or m.group(2)
             take = newer(v, current) and (upto is None or not newer(v, upto))
         if take:
             out.append(line.rstrip())
