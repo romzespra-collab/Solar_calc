@@ -1,4 +1,4 @@
-"""solar_calc.py  v1.10.0
+"""solar_calc.py  v1.11.0
 Солнечный калькулятор — точка входа: авто-установка библиотек, запуск окна, --selftest.
 Расчёт: солнце → угол/азимут → панели → схема Ns×Np → провод и контакты → MPPT (встроенный в инвертор
 или отдельный) → ток заряда → АКБ → инвертор. Данные солнца: встроенные (≈Киев) или PVGIS.
@@ -11,8 +11,13 @@
   modules/panels_db.tsv.gz  полная база панелей (CEC + паспорта серий)
   modules/mod_region.py погода региона за 5 лет (Open-Meteo / PVGIS-SARAH3)
   modules/mod_green.py  зелёный тариф (Украина): смета, ОСР, взаимозачёт, окупаемость; страница — mod_page_green
+  modules/gh_update*.py обновление с GitHub (общий модуль gh_update): страница «🔄 Обновление»
 
 Журнал:
+v1.11.0: обновление с GitHub (общий модуль gh_update 1.1.0): страница «🔄 Обновление» на боковой панели — токен
+        «только чтение», ветка, автопроверка (через 30 с и раз в 12 ч), анимация скачивания, резервная копия в
+        backup/, перезапуск; нашлась новая версия — «⬆» на боковой панели и «⬆ X.Y.Z» в строке состояния;
+        инструкция «Как получить токен» с картинками. Настройки, профили и журналы при обновлении не трогаются.
 v1.10.0: страница «💰 Зелёный тариф» — из «Калькулятора зелёного тарифа» v1.2.0, связана со станцией: панели,
         инвертор, АКБ, часовая выработка и потребление дома — из ⚙ Настроек (не вводятся второй раз). Вкладки:
         подключение и проверки (область/ОСР авто по координатам, ставки НКРЭКУ 2026, экспорт по модели
@@ -87,7 +92,7 @@ v1.1.0: инвертор, провода к АКБ и инвертору, акк
 v1.0.0: первая версия — солнце (встроенное + PVGIS), схемы Ns×Np, провод, окно MPPT, потери по этапам.
 """
 APP_NAME = "Солнечный калькулятор"
-VERSION = "1.10.0"
+VERSION = "1.11.0"
 
 import sys
 import os
@@ -241,6 +246,14 @@ def selftest():
     except Exception as e:
         ok = False
         lines.append(f"Расчёт: ОШИБКА {e}")
+    try:
+        from modules import gh_update, gh_update_qt, gh_update_help
+        if not (gh_update.newer("1.10.0", "1.9.16") and gh_update_qt.UpdatePage and gh_update_help.TokenHelpDialog):
+            raise RuntimeError("сравнение версий")
+        lines.append(f"Обновление с GitHub (gh_update {gh_update.VERSION}): OK")
+    except Exception as e:
+        ok = False
+        lines.append(f"Обновление с GitHub: ОШИБКА {e}")
     lines.append("ИТОГ: " + ("OK" if ok else "ОШИБКА"))
     txt = "\n".join(lines)
     print(txt)
@@ -266,6 +279,9 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(VERSION)
+    # после обновления: подождать, пока старая копия закроется
+    from modules import gh_update
+    gh_update.wait_previous(sys.argv)
     app.setStyle("Fusion")
     QLocale.setDefault(QLocale(QLocale.Russian, QLocale.Ukraine))
     tr = QTranslator(app)

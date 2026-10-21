@@ -1,4 +1,5 @@
-# solar_calc.spec  v1.10.0 — PyInstaller, onefile, без консоли
+# solar_calc.spec  v1.11.0 — PyInstaller, onefile, без консоли
+# v1.11.0: + modules/gh_update.py, gh_update_qt.py, gh_update_help.py (обновление с GitHub)
 # v1.10.0: без изменений сборки (новые модули mod_green, mod_page_green вшиваются сами), версия поднята
 # v1.9.15: без изменений сборки, версия поднята вместе с программой
 # v1.9.14: без изменений сборки, версия поднята вместе с программой
@@ -35,7 +36,8 @@ a = Analysis(
                    'modules.mod_checks', 'modules.mod_pvgis', 'modules.mod_theme', 'modules.mod_widgets',
                    'modules.mod_page_settings', 'modules.mod_page_results', 'modules.mod_page_tools',
                    'modules.mod_astro', 'modules.mod_stars', 'modules.mod_weather', 'modules.mod_forecast',
-                   'modules.mod_wx_draw', 'modules.mod_sky', 'modules.mod_page_sky', 'modules.mod_constructor', 'modules.mod_region'],
+                   'modules.mod_wx_draw', 'modules.mod_sky', 'modules.mod_page_sky', 'modules.mod_constructor', 'modules.mod_region',
+                   'modules.gh_update', 'modules.gh_update_qt', 'modules.gh_update_help'],
     hookspath=[],
     runtime_hooks=[],
     excludes=['PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngine',

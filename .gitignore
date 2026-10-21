@@ -4,6 +4,8 @@ selftest.txt
 __pycache__/
 build/
 dist/
-release/
 data/
 config.json.*
+backup/
+*.zip
+!release/*.zip

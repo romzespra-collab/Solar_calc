@@ -1,7 +1,9 @@
-"""mod_config.py  v1.10.0
+"""mod_config.py  v1.11.0
 параметры станции по умолчанию, config.json: загрузка, проверка, сохранение
 
 Журнал:
+v1.11.0: обновление с GitHub — upd_token (токен «только чтение»), upd_auto, upd_branch, upd_every_h; неверный
+        тип — по умолчанию.
 v1.10.0: sys["green"] — зелёный тариф (подключение, смета, окупаемость, чек-лист, заметки) с проверкой
         (mod_green.green_clean); погода региона — статистика дней, кВт·ч/м² по месяцам лет, источник (region_extra_clean);
         cfg["region_src"] — Open-Meteo / PVGIS-SARAH3.
@@ -93,7 +95,9 @@ DEFAULT_CONFIG = {"theme": "dark", "geometry": "", "sys": dict(DEFAULT_SYS),
                   "builtin": [list(x) for x in BUILTIN_SUN], "pvgis": None, "use_pvgis": True, "region": None,
                   "region_src": "om",
                   "last_dir": "", "weather": {"on": True, "model": "best_match", "poll": 30},
-                  "sky": {"names": True, "stars": True, "anim": True}}
+                  "sky": {"names": True, "stars": True, "anim": True},
+                  # обновление с GitHub (gh_update): токен «только чтение», автопроверка, ветка, раз в N часов
+                  "upd_token": "", "upd_auto": True, "upd_branch": "main", "upd_every_h": 12}
 
 
 _POS_KEY = re.compile(r"inv|house|grid|bat:\d{1,2}|(field|ctl):(m|[pc]\d{1,2})")
@@ -264,6 +268,14 @@ def load_config():
     if cfg["weather"]["poll"] not in (15, 30, 60, 120):
         cfg["weather"]["poll"] = 30
     cfg["last_dir"] = str(cfg.get("last_dir") or "")
+    for k, tp in (("upd_token", str), ("upd_auto", bool), ("upd_branch", str), ("upd_every_h", int)):
+        try:
+            cfg[k] = tp(cfg.get(k, DEFAULT_CONFIG[k]))
+        except (TypeError, ValueError):
+            cfg[k] = DEFAULT_CONFIG[k]
+    cfg["upd_branch"] = cfg["upd_branch"].strip() or "main"
+    if cfg["upd_every_h"] < 1:
+        cfg["upd_every_h"] = 12
     return cfg
 
 

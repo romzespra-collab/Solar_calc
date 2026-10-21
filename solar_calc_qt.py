@@ -1,7 +1,10 @@
-"""solar_calc_qt.py  v1.10.0
+"""solar_calc_qt.py  v1.11.0
 Главное окно программы (PySide6): боковая панель, страницы, лог, статус.
 
 Журнал:
+v1.11.0: страница «🔄 Обновление» (общий модуль gh_update: токен, ветка, автопроверка, «Что нового», перезапуск) —
+         внизу боковой панели над «🎨 Цвета»; создаётся при запуске (автопроверка идёт сама); новая версия —
+         «⬆» на кнопке страницы и «⬆ X.Y.Z» в строке состояния (клик — открыть страницу).
 v1.10.0: страница «💰 Зелёный тариф» (окупаемость, смета, ОСР, солнце за 5 лет, документы) — после «🔌 Горсеть»;
          пересчёт, тема, профиль и сброс обновляют её. Страница «🔀 Сравнение схем S×P» убрана.
 v1.9.7: профиль и config с BOM (Блокнот) открываются; «Настройки сохранены» — только если сохранились; смена
@@ -25,7 +28,7 @@ from PySide6.QtCore import Qt, QTimer, QByteArray
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel, QToolButton, QButtonGroup,
                                QHBoxLayout, QVBoxLayout, QGridLayout, QStackedWidget, QSplitter, QScrollArea,
-                               QPlainTextEdit, QMenu, QMessageBox, QFileDialog)
+                               QPlainTextEdit, QMenu, QMessageBox, QFileDialog, QPushButton)
 
 from modules.mod_base import APP_ROOT, MONTHS, WEATHER, _DONE, UIQ, log, Worker
 from modules.mod_sun import SunData
@@ -40,6 +43,7 @@ from modules.mod_page_tools import ToolPages
 from modules.mod_page_sky import SkyPages
 from modules.mod_page_green import GreenPages
 from modules.mod_weather import WeatherState
+from modules import gh_update, gh_update_qt
 
 
 class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWindow):
@@ -109,6 +113,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWind
                  ("📐", "Подбор угла и азимута", "tilt", self._page_tilt()),
                  ("🧵", "Подбор сечения провода", "wire", self._page_wire()),
                  ("🌐", "Данные солнца (PVGIS)", "data", self._page_data()),
+                 ("🔄", "Обновление с GitHub", "update", self._page_update()),
                  ("🎨", "Цвета", "colors", self._page_colors())]
         self.page_names = [p[2] for p in pages]
         self.page_idx = {n: i for i, n in enumerate(self.page_names)}
@@ -120,7 +125,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWind
             b.setFixedSize(48, 46)
             b.setCursor(Qt.PointingHandCursor)
             self.side_group.addButton(b, i)
-            if i == len(pages) - 1:
+            if name == "update":                         # «Обновление» и «Цвета» — внизу
                 sv.addStretch(1)
             if name == "tilt":
                 sep = QFrame()
@@ -129,6 +134,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWind
                 sv.addWidget(sep)
             sv.addWidget(b)
             self.stack.addWidget(page)
+        self.btn_side_upd = self.side_group.button(self.page_idx["update"])
         self.side_group.button(0).setChecked(True)
         self.side_group.idClicked.connect(self._go_page)
         h.addWidget(side)
@@ -154,9 +160,64 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWind
         sh.addSpacing(10)
         sh.addWidget(self.src_lab)
         sh.addStretch(1)
+        self.btn_upd = QPushButton()                     # «⬆ X.Y.Z» — есть новая версия на GitHub
+        self.btn_upd.setObjectName("updchip")
+        self.btn_upd.setCursor(Qt.PointingHandCursor)
+        self.btn_upd.clicked.connect(self.show_update)
+        self.btn_upd.hide()
+        sh.addWidget(self.btn_upd)
+        sh.addSpacing(10)
         sh.addWidget(self.status_lab)
         right.addWidget(sb)
         h.addLayout(right, 1)
+
+    # ── обновление с GitHub (общий модуль gh_update) ──
+    def _page_update(self):
+        """Страница «🔄 Обновление»: создаётся при запуске — автопроверка идёт, даже если её не открывали."""
+        gh_update_qt.set_colors(lambda: {"accent": self._p()["accent"], "text": self._p()["text"],
+                                         "dim": self._p()["muted"], "panel": self._p()["panel"],
+                                         "border": self._p()["line"]})
+        target = gh_update.UpdateTarget(
+            owner="romzespra-collab", repo="Solar_calc", name="solar_calc", current=app_version(),
+            app_dir=str(APP_ROOT), main_file="solar_calc.pyw", changelog="",
+            version_files=("solar_calc.py",), where="боковая панель → 🔄 Обновление")
+        c = self.cfg
+
+        def cfg_get():
+            return {"token": c.get("upd_token", ""), "auto": bool(c.get("upd_auto", True)),
+                    "branch": c.get("upd_branch") or "main", "every_h": int(c.get("upd_every_h") or 12)}
+
+        def cfg_set(d):                                  # сохраняется сразу
+            c.update(upd_token=d["token"], upd_auto=bool(d["auto"]), upd_branch=d["branch"] or "main",
+                     upd_every_h=int(d.get("every_h") or 12))
+            save_config(c)
+
+        pg, v = self._page()
+        v.addWidget(_lab("Обновление с GitHub", "bigTitle"))
+        self.update_page = gh_update_qt.UpdatePage(target, cfg_get, cfg_set, on_quit=self.quit_app, log=log.info)
+        self.update_page.layout().setContentsMargins(0, 0, 0, 0)
+        v.addWidget(self.update_page, 1)
+        self.update_page.box.available.connect(self._update_available)
+        return pg
+
+    def show_update(self):
+        i = self.page_idx["update"]
+        self.side_group.button(i).setChecked(True)
+        self._go_page(i)
+
+    def _update_available(self, ver):
+        """Нашлась новая версия: «⬆» на боковой панели и кнопка в строке состояния."""
+        tip = f"Доступна новая версия {ver} (у вас {app_version()}) — 🔄 Обновление с GitHub"
+        self.btn_side_upd.setText("⬆")
+        self.btn_side_upd.setToolTip(tip)
+        self.btn_upd.setText(f"⬆ {ver}")
+        self.btn_upd.setToolTip(tip)
+        self.btn_upd.show()
+
+    def quit_app(self):
+        """Полный выход (после обновления новая копия уже запущена)."""
+        self.close()
+        QApplication.instance().quit()
 
     def _page(self):
         pg = QWidget()

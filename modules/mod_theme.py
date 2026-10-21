@@ -1,7 +1,9 @@
-"""mod_theme.py  v1.10.0
+"""mod_theme.py  v1.11.0
 палитры тёмной/светлой темы и QSS для всех окон и диалогов
 
 Журнал:
+v1.11.0: страница «🔄 Обновление» — рамки групп (QGroupBox) в цветах темы, кнопка «⬆ X.Y.Z» в строке состояния;
+         у полей ввода цвет текста задан явно.
 v1.10.0: вкладки (QTabWidget/QTabBar — подчёркивание цветом акцента), галочки в списках и таблицах (видны в
          обеих темах: рамка, заливка акцентом и белая галочка), раскрывающиеся группы настроек (accHead).
 v1.9.4: цвет графиков для погоды «Регион 5 лет».
@@ -83,10 +85,15 @@ QLabel#kpiCap {{ color: {p['muted']}; font-size: 8pt; }}
 QLabel#fieldLab {{ color: {p['muted']}; }}
 QLabel#subHead {{ color: {p['text']}; font-weight: 600; padding-top: 6px; border-bottom: 1px solid {p['line']}; }}
 QLabel#bigTitle {{ font-size: 13pt; font-weight: 600; }}
+QGroupBox {{ color: {p['text']}; background: {p['panel']}; border: 1px solid {p['line']}; border-radius: 10px;
+    margin-top: 12px; padding-top: 10px; font-weight: 600; }}
+QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 4px; color: {p['text']}; }}
+QPushButton#updchip {{ background: {p['panel2']}; color: {p['accent']}; border: 1px solid {p['accent']}; border-radius: 7px;
+    padding: 1px 10px; font-size: 9pt; font-weight: 600; }}
 QFrame#statusbar {{ background: {p['side']}; border-top: 1px solid {p['line']}; }}
 QLabel#pill {{ background: {p['panel2']}; border: 1px solid {p['line']}; border-radius: 10px; padding: 1px 10px; font-size: 9pt; }}
 QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox, QPlainTextEdit {{
-    background: {p['panel2']}; border: 1px solid {p['line']}; border-radius: 7px; padding: 4px 6px;
+    background: {p['panel2']}; color: {p['text']}; border: 1px solid {p['line']}; border-radius: 7px; padding: 4px 6px;
     selection-background-color: {p['accent']}; selection-color: #ffffff; }}
 QLineEdit:focus, QDoubleSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus {{ border-color: {p['accent']}; }}
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0px; border: none; }}
