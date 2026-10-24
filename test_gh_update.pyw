@@ -85,7 +85,7 @@ def t_check_download():
              {"name": "other_v9.zip", "path": "y", "type": "file"}]
     t = gu.UpdateTarget("o", "r", "demo", "1.0", ".", "Demo.pyw")
     old = gu._open
-    gu._open = lambda url, token, accept=None, timeout=0: R(
+    gu._open = lambda url, token, accept=None, timeout=0, headers=None: R(
         json.dumps(items).encode() if "raw" not in str(accept) else data)
     try:
         rel, new = gu.check(t, "tok")

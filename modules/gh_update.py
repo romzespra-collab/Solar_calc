@@ -25,6 +25,13 @@
 wait_previous(sys.argv) — ждёт, пока старая завершится (иначе защита от
 второго запуска приняла бы её за «уже запущено»).
 
+1.1.3: в облаке анимации обновления — значок GitHub над надписью (gh_update_qt; без QtSvg —
+только надпись, как раньше).
+1.1.2: архив качается по ссылке на файл (download_url из списка release/,
+raw.githubusercontent.com), а не через API: API обрывает ответ через ~10 с,
+и архив ~39 МБ приходил не целиком (38765774 из 38982176 байт, сколько ни
+пробуй). Оборвалось — докачка с места обрыва (Range), до DL_TRIES попыток;
+ссылки нет или она не открылась — по-старому через API, тоже с докачкой.
 1.1.1: «Что нового» понимает и заголовки «v1.2.3: …», «## v1.2.3», «Версия
 1.2.3 — …»; инструкция показывает настоящий файл с номером версии.
 1.1.0: version_files — где искать номер версии в архиве (кроме
@@ -37,6 +44,7 @@ app/version.py, version.py, VERSION и главного файла); where — �
 """
 import fnmatch
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -52,7 +60,7 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass, field
 
-VERSION = "1.1.1"
+VERSION = "1.1.3"
 API = "https://api.github.com"
 TIMEOUT = 30
 
@@ -96,6 +104,7 @@ class Release:
     path: str                     # release/smart_bms_v4.89.zip
     sha: str                      # git blob sha1 (сверка после скачивания)
     size: int
+    url: str = ""                 # download_url (raw.githubusercontent.com)
 
 
 # ---------------- версии ----------------
@@ -125,17 +134,20 @@ def _ctx():
         return ssl.create_default_context()
 
 
-def _req(url, token, accept="application/vnd.github+json"):
+def _req(url, token, accept="application/vnd.github+json", headers=None):
     h = {"Accept": accept, "User-Agent": "gh_update/" + VERSION,
          "X-GitHub-Api-Version": "2022-11-28"}
     if token:
         h["Authorization"] = "Bearer " + token.strip()
+    if headers:
+        h.update(headers)
     return urllib.request.Request(url, headers=h)
 
 
-def _open(url, token, accept="application/vnd.github+json", timeout=TIMEOUT):
+def _open(url, token, accept="application/vnd.github+json", timeout=TIMEOUT,
+          headers=None):
     try:
-        return urllib.request.urlopen(_req(url, token, accept),
+        return urllib.request.urlopen(_req(url, token, accept, headers),
                                       timeout=timeout, context=_ctx())
     except urllib.error.HTTPError as e:
         if e.code == 401:
@@ -176,7 +188,7 @@ def latest(t, token):
         if not m or it.get("type") != "file":
             continue
         rel = Release(m.group(1), it["path"], it.get("sha") or "",
-                      int(it.get("size") or 0))
+                      int(it.get("size") or 0), it.get("download_url") or "")
         if best is None or newer(rel.version, best.version):
             best = rel
     return best
@@ -269,24 +281,80 @@ def _blob_sha1(data):
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
+DL_TRIES = 12          # попыток на источник; 3 подряд без прибавки — следующий
+
+
+def _fetch(url, token, accept, buf, total, progress):
+    """Одна попытка: дочитать url в buf с места len(buf) (Range).
+    -> (total, прибавилось байт). Обрыв посреди — не ошибка: вызывающий
+    докачает следующей попыткой."""
+    got0 = len(buf)
+    hdr = {"Range": "bytes=%d-" % got0} if got0 else None
+    with _open(url, token, accept=accept, timeout=120, headers=hdr) as r:
+        st = int(getattr(r, "status", 0) or getattr(r, "code", 0) or 200)
+        if got0 and st != 206:
+            del buf[:]                         # Range не понят — с начала
+            got0 = 0
+        if not total:
+            n = int(r.headers.get("Content-Length") or 0)
+            total = n + got0 if n else 0
+        try:
+            while True:
+                chunk = r.read(65536)
+                if not chunk:
+                    break
+                buf += chunk
+                if progress:
+                    progress(len(buf), total)
+        except (OSError, ValueError, http.client.HTTPException):
+            pass                               # обрыв посреди — докачаем
+    return total, len(buf) - got0
+
+
 def download(t, token, rel, progress=None):
-    """Скачать архив во временный файл, сверить размер и sha. -> путь."""
-    url = "%s/repos/%s/%s/contents/%s?ref=%s" % (
+    """Скачать архив во временный файл, сверить размер и sha. -> путь.
+    ★ 1.1.2: по ссылке на файл (у API ответ рвётся через ~10 с), обрыв —
+    докачка с места обрыва."""
+    api = "%s/repos/%s/%s/contents/%s?ref=%s" % (
         API, t.owner, t.repo, urllib.parse.quote(rel.path),
         urllib.parse.quote(t.branch))
+    url = rel.url
+    try:                                       # ссылка живёт минуты — свежая
+        fresh = latest(t, token)
+        if fresh is not None and fresh.path == rel.path and fresh.url:
+            url = fresh.url
+    except Exception:                          # noqa: BLE001
+        pass
+    srcs = [(url, "application/octet-stream")] if url else []
+    srcs.append((api, "application/vnd.github.raw"))
     buf = bytearray()
-    with _open(url, token, accept="application/vnd.github.raw",
-               timeout=120) as r:
-        total = int(r.headers.get("Content-Length") or rel.size or 0)
-        while True:
-            chunk = r.read(65536)
-            if not chunk:
+    total = rel.size or 0
+    last = None
+    for src, accept in srcs:
+        idle = 0
+        for _ in range(DL_TRIES):
+            try:
+                total, add = _fetch(src, token, accept, buf, total, progress)
+            except UpdateError as e:
+                last = e
+                if len(buf) == 0 and e.code:   # ссылка не открылась вовсе
+                    break
+                add = 0
+            except (OSError, ValueError, http.client.HTTPException) as e:
+                last = UpdateError("нет связи с GitHub (%s)" % e)
+                add = 0
+            if total and len(buf) >= total:
                 break
-            buf += chunk
-            if progress:
-                progress(len(buf), total)
+            idle = 0 if add > 0 else idle + 1
+            if idle >= 3:
+                break
+            time.sleep(1.0)
+        if total and len(buf) >= total:
+            break
     data = bytes(buf)
     if rel.size and len(data) != rel.size:
+        if not data and last is not None:
+            raise last
         raise UpdateError("архив скачался не целиком (%d из %d байт)"
                           % (len(data), rel.size))
     if rel.sha and _blob_sha1(data) != rel.sha:
