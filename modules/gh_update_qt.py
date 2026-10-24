@@ -37,6 +37,12 @@ from PySide6.QtWidgets import (QComboBox, QGroupBox, QHBoxLayout, QLabel,
                                QProgressBar, QPushButton, QSizePolicy,
                                QVBoxLayout, QWidget)
 
+try:                                    # значок GitHub в облаке рисуется из SVG-контура
+    from PySide6.QtCore import QByteArray
+    from PySide6.QtSvg import QSvgRenderer
+except ImportError:                     # нет QtSvg — облако с одной надписью, как раньше
+    QSvgRenderer = None
+
 try:                                    # пакет app/ …
     from . import gh_update
     from .gh_update_help import TOKENS_URL
@@ -641,6 +647,27 @@ class UpdateAnim(QWidget):
         f.setBold(bold)
         p.setFont(f)
 
+    # значок GitHub (Octicons «mark-github», 16×16)
+    GITHUB_MARK = (
+        "M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75"
+        "-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67"
+        "-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08"
+        " 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33"
+        "-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01"
+        " 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z")
+
+    def _mark(self, p, cx, cy, size, color):
+        """Значок GitHub цветом color, по центру (cx, cy). -> False, если нарисовать нечем (нет QtSvg)."""
+        if QSvgRenderer is None:
+            return False
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="%s" d="%s"/></svg>'
+               % (QColor(color).name(), self.GITHUB_MARK))
+        r = QSvgRenderer(QByteArray(svg.encode("ascii")))
+        if not r.isValid():
+            return False
+        r.render(p, QRectF(cx - size / 2, cy - size / 2, size, size))
+        return True
+
     def _cloud(self, p, c, col, txt, t, glow):
         x, y = c.x(), c.y()
         path = QPainterPath()
@@ -661,9 +688,14 @@ class UpdateAnim(QWidget):
         p.setPen(QPen(col, 2))
         p.setBrush(fill)
         p.drawPath(path)
-        self._font(p, 9, True)
-        p.setPen(txt)
-        p.drawText(QRectF(x - 40, y - 6, 84, 24), Qt.AlignCenter, "GitHub")
+        if self._mark(p, x + 2, y - 14, 20, txt):     # значок — в «шапке» облака, надпись ниже
+            self._font(p, 8, True)
+            p.setPen(txt)
+            p.drawText(QRectF(x - 40, y + 2, 84, 20), Qt.AlignCenter, "GitHub")
+        else:
+            self._font(p, 9, True)
+            p.setPen(txt)
+            p.drawText(QRectF(x - 40, y - 6, 84, 24), Qt.AlignCenter, "GitHub")
 
     def _pc(self, p, c, txt, dim, acc, ok, t):
         x, y = c.x(), c.y()
