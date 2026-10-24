@@ -628,7 +628,7 @@ class UpdateAnim(QWidget):
                     "%s из %s МБ%s" % (_mb(got), _mb(tot), spd), None)
         if ph == "install":
             return ("Устанавливаю %s…" % d.get("ver"),
-                    "старые файлы — в backup, настройки не трогаю", None)
+                    "старый код стираю, настройки не трогаю", None)
         if ph == "done":
             return ("Готово: установлена %s" % d.get("ver"),
                     "нужен перезапуск программы", QColor("#3fbf6f"))

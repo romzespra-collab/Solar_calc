@@ -62,7 +62,8 @@ def _install(layout, ver_in_zip, ver_name):
                             version_files=("pkg/__init__.py",) if layout == "custom" else ())
         gu.install(t, p, ver_name)
         assert open(os.path.join(app_dir, "cfg.json"), encoding="utf-8").read() == "мои"
-        assert os.path.exists(os.path.join(app_dir, "backup", "v1.0", "Demo.pyw"))
+        assert open(os.path.join(app_dir, "Demo.pyw"), encoding="utf-8").read() != "old"
+        assert not os.path.exists(os.path.join(app_dir, "backup"))      # 1.2.0: без копий
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -75,6 +76,73 @@ def t_install():
             raise AssertionError("чужая версия принята: " + lay)
         except gu.UpdateError:
             pass
+
+
+def _zip(root, files):
+    zb = io.BytesIO()
+    with zipfile.ZipFile(zb, "w") as z:
+        for fn, txt in files.items():
+            z.writestr("demo/" + fn, txt)
+    p = os.path.join(root, "a.zip")
+    open(p, "wb").write(zb.getvalue())
+    return p
+
+
+def t_cleanup():
+    """1.2.0: старое стирается, настройки и данные — нет."""
+    root = tempfile.mkdtemp(prefix="t_upd_")
+    try:
+        app_dir = os.path.join(root, "prog")
+        old = {"Demo.pyw": "old", "Old.pyw": "старый главный", "my.bat": "свой",
+               "cfg.json": "мои", "notes.txt": "заметки",
+               "app/__init__.py": "", "app/old.py": "x", "app/keep.py": "x",
+               "app/__pycache__/old.cpython-313.pyc": "pyc",
+               "app/__pycache__/keep.cpython-313.pyc": "pyc",
+               "app/user.json": "данные", "logs/x.py": "журнал",
+               "Rec/a.mp4": "видео", "venvx/pyvenv.cfg": "", "venvx/m.py": "",
+               "backup/v1.0/Demo.pyw": "копия"}
+        for fn, txt in old.items():
+            f = os.path.join(app_dir, fn)
+            os.makedirs(os.path.dirname(f), exist_ok=True)
+            open(f, "w", encoding="utf-8").write(txt)
+        ex = lambda fn: os.path.exists(os.path.join(app_dir, fn))
+        t = gu.UpdateTarget("o", "r", "demo", "1.0", app_dir, "Demo.pyw")
+        new1 = {"Demo.pyw": 'VERSION = "1.1"\n', "app/__init__.py": "",
+                "app/keep.py": "y", "app/new.py": "y", "pics/a.png": "png",
+                "cfg.json": "чужие"}
+        gu.install(t, _zip(root, new1), "1.1")
+        # первый раз (списка нет): старый код в папках архива (корень — нет)
+        for fn in ("app/old.py", "app/__pycache__/old.cpython-313.pyc",
+                   "backup"):
+            assert not ex(fn), "не стёрто: " + fn
+        for fn in ("Old.pyw", "my.bat", "cfg.json", "notes.txt", "app/user.json", "logs/x.py",
+                   "Rec/a.mp4", "venvx/m.py", "app/keep.py", "app/new.py"):
+            assert ex(fn), "стёрто лишнее: " + fn
+        assert open(os.path.join(app_dir, "cfg.json"), encoding="utf-8").read() == "мои"
+        man = gu.read_manifest(app_dir)
+        assert man == {"Demo.pyw", "app/__init__.py", "app/keep.py", "app/new.py",
+                       "pics/a.png"}, man
+        # второй раз — по списку: стёрто то, что ставили, свой файл цел
+        open(os.path.join(app_dir, "app/mine.py"), "w").write("свой модуль")
+        t.current = "1.1"
+        new2 = {"Demo.pyw": 'VERSION = "1.2"\n', "app/__init__.py": "",
+                "app/keep.py": "z", "cfg.json": "чужие"}
+        gu.install(t, _zip(root, new2), "1.2")
+        assert not ex("app/new.py") and not ex("pics/a.png") and not ex("pics"), \
+            "по списку не стёрто"
+        assert set(t.removed) == {"app/new.py", "pics/a.png"}, t.removed
+        for fn in ("app/mine.py", "my.bat", "cfg.json", "notes.txt", "Rec/a.mp4"):
+            assert ex(fn), "стёрто лишнее (по списку): " + fn
+        # разовая чистка старых версий
+        os.makedirs(os.path.join(app_dir, "backup", "v1.1"))
+        open(os.path.join(app_dir, "app", "gone.py"), "w").write("x")
+        got = gu.drop_leftovers(app_dir, ("app/gone.py",))
+        assert not ex("app/gone.py") and not ex("backup"), got
+        os.makedirs(os.path.join(app_dir, "backup"))
+        open(os.path.join(app_dir, "backup", "чужое.txt"), "w").write("x")
+        assert not gu.drop_old_backup(app_dir) and ex("backup/чужое.txt")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def t_check_download():
@@ -100,7 +168,41 @@ def t_check_download():
             pass
     finally:
         gu._open = old
+    t_resume()
     assert gu.wait_previous(["x", "--after-update", "999999999"], 1)
+
+
+def t_resume():
+    """★ 1.1.2: по ссылке на файл; ответ рвётся — докачка с места (Range)."""
+    data = bytes(range(256)) * 400
+    items = [{"name": "demo_v1.2.zip", "path": "release/demo_v1.2.zip",
+              "type": "file", "sha": gu._blob_sha1(data), "size": len(data),
+              "download_url": "https://raw.example/demo_v1.2.zip?token=x"}]
+    t = gu.UpdateTarget("o", "r", "demo", "1.0", ".", "Demo.pyw")
+    calls = []
+
+    def fake(url, token, accept=None, timeout=0, headers=None):
+        if "raw.example" not in url:
+            if "raw" in str(accept):
+                raise AssertionError("качаю через API, а есть ссылка")
+            return R(json.dumps(items).encode())
+        rng = (headers or {}).get("Range", "")
+        start = int(rng[6:-1]) if rng else 0
+        calls.append(start)
+        r = R(data[start:start + 30000])         # каждый ответ — обрыв
+        r.status = 206 if start else 200
+        return r
+    old, slp = gu._open, gu.time.sleep
+    gu._open, gu.time.sleep = fake, lambda s: None
+    try:
+        rel, new = gu.check(t, "tok")
+        p = gu.download(t, "tok", rel)
+        with open(p, "rb") as fh:
+            assert fh.read() == data
+        os.remove(p)
+        assert calls[0] == 0 and calls[1] == 30000 and len(calls) == 4, calls
+    finally:
+        gu._open, gu.time.sleep = old, slp
 
 
 def t_qt(shots=None):
@@ -137,7 +239,7 @@ def t_qt(shots=None):
 if __name__ == "__main__":
     shots = os.environ.get("SHOTS")
     bad = 0
-    for f in (t_changelog, t_versions, t_install, t_check_download, lambda: t_qt(shots)):
+    for f in (t_changelog, t_versions, t_install, t_cleanup, t_check_download, lambda: t_qt(shots)):
         try:
             f(); print("OK  ", getattr(f, "__name__", "qt"))
         except Exception as e:

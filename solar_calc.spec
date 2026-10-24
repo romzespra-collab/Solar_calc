@@ -1,4 +1,5 @@
-# solar_calc.spec  v1.11.2 — PyInstaller, onefile, без консоли
+# solar_calc.spec  v1.11.3 — PyInstaller, onefile, без консоли
+# v1.11.3: без изменений сборки (модуль gh_update 1.2.0), версия поднята
 # v1.11.2: без изменений сборки (модуль gh_update 1.1.3), версия поднята
 # v1.11.1: без изменений сборки (модуль gh_update 1.1.1), версия поднята
 # v1.11.0: + modules/gh_update.py, gh_update_qt.py, gh_update_help.py (обновление с GitHub)

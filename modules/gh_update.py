@@ -16,15 +16,30 @@
 Что делает install():
   * распаковывает во временную папку и проверяет, что внутри — та самая
     программа (есть главный файл и номер версии совпадает с именем архива);
-  * старые файлы, которые заменяются, копирует в backup/<старая версия>/;
-  * НИКОГДА не трогает настройки, журналы и скачанное (KEEP — маски);
-  * при ошибке посреди копирования возвращает всё из резервной копии.
+  * ставит новые файлы поверх старых;
+  * стирает то, что ставил сам в прошлый раз и чего в новой версии нет
+    (удалённые и разбитые на части модули, их .pyc, опустевшие папки).
+    Что ставил — помнит список MANIFEST в папке программы; списка ещё нет
+    (первое обновление этим модулем) — старый код (CODE_EXT) в папках,
+    которые есть в архиве (корень — нет: там могут лежать свои скрипты),
+    мимо папок данных (KEEP_DIRS);
+  * НИКОГДА не трогает и не перезаписывает настройки, журналы, записи,
+    скачанное, DLL и EXE (KEEP — маски, KEEP_DIRS — папки);
+  * при ошибке посреди копирования возвращает старые файлы (временная
+    копия вне папки программы; папки backup/ больше нет — старая
+    удаляется).
 
 Перезапуск: restart() запускает программу заново с ключом
 --after-update <pid> и закрывает текущую. Новая копия в самом начале зовёт
 wait_previous(sys.argv) — ждёт, пока старая завершится (иначе защита от
 второго запуска приняла бы её за «уже запущено»).
 
+1.2.0: обновление больше не копит мусор: стирается то, что модуль ставил
+сам и чего нет в новой версии (список MANIFEST — .gh_update_files.txt;
+без списка — stale_files: код в папках архива, мимо KEEP_DIRS — logs, libs,
+Rec, Archive, Bin, sdk, venv …); настройки и всё по KEEP — никогда.
+backup/ не ведётся (старый удаляется), откат при ошибке — из временной
+копии вне папки программы.
 1.1.3: в облаке анимации обновления — значок GitHub над надписью (gh_update_qt; без QtSvg —
 только надпись, как раньше).
 1.1.2: архив качается по ссылке на файл (download_url из списка release/,
@@ -60,7 +75,7 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass, field
 
-VERSION = "1.1.3"
+VERSION = "1.2.0"
 API = "https://api.github.com"
 TIMEOUT = 30
 
@@ -70,6 +85,22 @@ KEEP_DEFAULT = (
     "libs/*", "logs/*", ".runtime/*", "backup/*", "firmware/*",
     "cloud_history/*", "*.exe", "*.dll", "release/*", ".git/*",
 )
+
+# ★ 1.2.0: список файлов, поставленных обновлением (по нему в следующий раз
+# стирается то, чего в новой версии нет)
+MANIFEST = ".gh_update_files.txt"
+
+# ★ 1.2.0: без списка (первое обновление этим модулем) — что из старых
+# файлов стирается, если его нет в новой версии, —
+# только код (настройки, журналы, записи, DLL — никогда)
+CODE_EXT = (".py", ".pyw", ".pyc", ".pyo", ".bat", ".cmd", ".spec", ".md",
+            ".qss")
+# папки данных и чужого кода: туда чистка не заходит ни на каком уровне
+KEEP_DIRS = frozenset((
+    "logs", "libs", "rec", "archive", "bin", "sdk", ".runtime", "firmware",
+    "cloud_history", "release", "backup", ".git", ".smartmon_parts", "build",
+    "dist", "venv", ".venv", "env", "site-packages", "lib", "scripts",
+    "node_modules", "downloads", "download"))
 
 
 class UpdateError(Exception):
@@ -96,6 +127,7 @@ class UpdateTarget:
     keep: tuple = field(default_factory=lambda: KEEP_DEFAULT)
     version_files: tuple = ()     # где ещё искать VERSION = "…" в архиве
     where: str = "Настройки → 🔄 Обновление"   # где вкладка (для инструкции)
+    removed: list = field(default_factory=list)  # ★ 1.2.0: что стёрла install()
 
 
 @dataclass
@@ -380,11 +412,162 @@ def _safe(root, rel):
     return dst
 
 
+def _keep_dir(name):
+    return name.lower() in KEEP_DIRS
+
+
+def stale_files(app_dir, new_files, keep=KEEP_DEFAULT):
+    """★ 1.2.0: старые файлы кода, которых нет в новой версии -> список
+    путей (относительно app_dir, через «/»). Только когда списка MANIFEST
+    ещё нет. Смотрим только папки, которые есть в архиве (app/, tests/ …):
+    корень (свои скрипты рядом с программой), папки данных (KEEP_DIRS) и
+    виртуальные окружения (pyvenv.cfg) — мимо."""
+    app_dir = os.path.abspath(app_dir)
+    new = set(f.replace("\\", "/") for f in new_files)
+    out = []
+    tops = sorted(set(f.split("/", 1)[0] for f in new if "/" in f))
+    for top in tops:
+        root = os.path.join(app_dir, top)
+        if _keep_dir(top) or not os.path.isdir(root):
+            continue
+        for dp, dns, fns in os.walk(root):
+            if "pyvenv.cfg" in fns:
+                dns[:] = []
+                continue
+            dns[:] = [d for d in dns if not _keep_dir(d)]
+            for fn in fns:
+                rel = os.path.relpath(os.path.join(dp, fn),
+                                      app_dir).replace(os.sep, "/")
+                if rel in new or _kept(rel, keep):
+                    continue
+                if os.path.splitext(fn)[1].lower() in CODE_EXT:
+                    out.append(rel)
+    return out
+
+
+def read_manifest(app_dir):
+    """Что поставило прошлое обновление -> set или None (списка нет)."""
+    try:
+        with open(os.path.join(app_dir, MANIFEST), encoding="utf-8") as fh:
+            return set(x.strip().replace("\\", "/") for x in fh
+                       if x.strip() and not x.startswith("#"))
+    except OSError:
+        return None
+
+
+def write_manifest(app_dir, files):
+    tmp = os.path.join(app_dir, MANIFEST + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write("# gh_update: файлы, поставленные обновлением (не править)\n")
+        fh.write("\n".join(sorted(files)) + "\n")
+    os.replace(tmp, os.path.join(app_dir, MANIFEST))
+
+
+def _drop_stale(app_dir, files, installed, keep, log):
+    """Стереть старое -> список стёртого. Затем — новый список MANIFEST."""
+    prev = read_manifest(app_dir)
+    new = set(f.replace("\\", "/") for f in files)
+    if prev is None:
+        cand = stale_files(app_dir, files, keep)
+    else:
+        cand = sorted(r for r in prev - new if not _kept(r, keep))
+    removed, dirs = [], set()
+    for rel in cand:
+        try:
+            dst = _safe(app_dir, rel)
+            if not os.path.isfile(dst):
+                continue
+            os.remove(dst)
+        except (OSError, UpdateError) as exc:
+            log("обновление: не стёр %s: %s" % (rel, exc))
+            continue
+        removed.append(rel)
+        dirs.add(os.path.dirname(dst))
+        # .pyc стёртого модуля
+        stem, ext = os.path.splitext(os.path.basename(rel))
+        pyc = os.path.join(os.path.dirname(dst), "__pycache__")
+        if ext.lower() in (".py", ".pyw") and os.path.isdir(pyc):
+            for x in os.listdir(pyc):
+                if x.split(".", 1)[0] == stem and x.endswith(".pyc"):
+                    try:
+                        os.remove(os.path.join(pyc, x))
+                        dirs.add(pyc)
+                    except OSError:
+                        pass
+    # опустевшие папки — снизу вверх, до папки программы
+    for d in sorted(dirs, key=len, reverse=True):
+        while d != app_dir and d.startswith(app_dir + os.sep):
+            try:
+                os.rmdir(d)                        # только пустую
+            except OSError:
+                break
+            d = os.path.dirname(d)
+    try:
+        write_manifest(app_dir, installed)
+    except OSError as exc:
+        log("обновление: список файлов не записан: %s" % exc)
+    return removed
+
+
+def drop_old_backup(app_dir, log=None):
+    """★ 1.2.0: папка backup/ прежних обновлений (backup/v<версия>/…) —
+    удалить. Только если в ней одни папки «v…» (чужое — не трогаем)."""
+    b = os.path.join(os.path.abspath(app_dir), "backup")
+    if not os.path.isdir(b):
+        return False
+    try:
+        items = os.listdir(b)
+        if any(not (x.lower().startswith("v")
+                    and os.path.isdir(os.path.join(b, x))) for x in items):
+            return False
+        shutil.rmtree(b)
+    except OSError as e:
+        if log:
+            log("обновление: старую папку backup не удалить: %s" % e)
+        return False
+    if log:
+        log("обновление: старая папка backup удалена (резервных копий "
+            "больше нет)")
+    return True
+
+
+def drop_leftovers(app_dir, gone=(), log=None):
+    """★ 1.2.0: разово при запуске — то, что оставили обновления до 1.2.0:
+    папка backup/ и модули, удалённые из программы (gone — пути вида
+    «app/quick_fill.py»; заодно их .pyc в __pycache__). -> что стёрто."""
+    app_dir = os.path.abspath(app_dir)
+    out = []
+    for rel in gone:
+        d, fn = os.path.split(rel.replace("/", os.sep))
+        stem = os.path.splitext(fn)[0]
+        cands = [os.path.join(app_dir, d, fn)]
+        pyc = os.path.join(app_dir, d, "__pycache__")
+        if os.path.isdir(pyc):
+            cands += [os.path.join(pyc, x) for x in os.listdir(pyc)
+                      if x.split(".", 1)[0] == stem and x.endswith(".pyc")]
+        for c in cands:
+            if os.path.isfile(c):
+                try:
+                    os.remove(c)
+                    out.append(os.path.relpath(c, app_dir))
+                except OSError:
+                    pass
+    if out and log:
+        log("обновление: стёрт старый код, оставшийся от прежних версий: "
+            "%s" % ", ".join(x for x in out if not x.endswith(".pyc")))
+    if drop_old_backup(app_dir, log):
+        out.append("backup")
+    return out
+
+
 def install(t, zip_path, rel_version, log=None):
-    """Поставить архив поверх t.app_dir. -> список заменённых файлов."""
+    """Поставить архив поверх t.app_dir. -> список заменённых файлов.
+    ★ 1.2.0: старый код, которого нет в архиве, стирается (stale_files);
+    t.removed — что стёрто."""
     log = log or (lambda *_a: None)
     app_dir = os.path.abspath(t.app_dir)
     stage = tempfile.mkdtemp(prefix=t.name + "_upd_")
+    bdir = None
     try:
         with zipfile.ZipFile(zip_path) as z:
             bad = z.testzip()
@@ -427,8 +610,9 @@ def install(t, zip_path, rel_version, log=None):
         if found and vtuple(found) != vtuple(rel_version):
             raise UpdateError("внутри архива версия %s, а не %s — обновление "
                               "отменено" % (found, rel_version))
-        # резервная копия того, что заменим
-        bdir = os.path.join(app_dir, "backup", "v" + t.current)
+        # ★ 1.2.0: копия заменяемого — только на случай отката, во временной
+        # папке (не в папке программы), после установки удаляется
+        bdir = tempfile.mkdtemp(prefix=t.name + "_old_")
         todo = [f for f in files if not _kept(f, t.keep)]
         replaced = []
         try:
@@ -457,11 +641,20 @@ def install(t, zip_path, rel_version, log=None):
                     pass
             raise UpdateError("не удалось заменить файлы (%s) — оставлена "
                               "прежняя версия" % exc) from exc
-        log("обновление: заменено файлов %d, резервная копия — %s"
-            % (len(replaced), bdir))
+        # ★ 1.2.0: то, что ставили в прошлый раз и чего в новой версии нет,
+        # — стереть (без списка — старый код по stale_files)
+        removed = _drop_stale(app_dir, files, todo, t.keep, log)
+        drop_old_backup(app_dir, log)
+        t.removed = removed
+        code = [r for r in removed if not r.endswith((".pyc", ".pyo"))]
+        log("обновление: заменено файлов %d, стёрто старых %d%s"
+            % (len(replaced), len(removed),
+               (" (%s)" % ", ".join(code)[:400]) if code else ""))
         return replaced
     finally:
         shutil.rmtree(stage, ignore_errors=True)
+        if bdir:
+            shutil.rmtree(bdir, ignore_errors=True)
         try:
             os.remove(zip_path)
         except OSError:
