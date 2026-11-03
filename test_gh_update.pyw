@@ -243,134 +243,24 @@ def t_resume():
         gu._open, gu.time.sleep = old, slp
 
 
-def _exe_zip(path, ver, top="Demo/", exe="Demo.exe"):
-    with zipfile.ZipFile(path, "w") as z:
-        z.writestr(top + exe, b"MZ")
-        z.writestr(top + "_internal/python312.dll", b"dll")
-        z.writestr(top + "vendor/netsdk/dhnetsdk.dll", b"sdk")
-        z.writestr(top + "README_RU.txt", "readme")
-        z.writestr(top + "exe_version.txt", ver + "\n")
-
-
-def t_exe():
-    """★ 1.3.0: собранный exe — сборка из Releases, распаковка, помощник."""
-    t = gu.UpdateTarget("o", "r", "demo", "1.0", ".", "Demo.pyw")
-    assert gu.exe_name(t) == "Demo.exe"
+def t_python_only():
+    """★ 1.4.0: обновление только Python — exe-части модуля нет, у собранного
+    exe check() — понятная ошибка, а не скачивание сборки."""
+    for name in ("check_exe", "latest_exe", "download_exe", "stage_exe",
+                 "staged_exe", "launch_swap", "swap_failed", "swap_script",
+                 "finish_exe_update", "exe_name", "EXE_NEW", "EXE_SWAP"):
+        assert not hasattr(gu, name), name
     assert gu.run_kind() == "python" and not gu.is_frozen()
-    rels = [{"draft": False, "assets": [
-                {"name": "demo_exe_v1.2.zip", "size": 9, "state": "uploaded",
-                 "url": "https://api/x/assets/2", "digest": "sha256:AB"},
-                {"name": "other_exe_v9.zip", "size": 1, "url": "u"}]},
-            {"draft": True, "assets": [{"name": "demo_exe_v5.0.zip", "size": 1,
-                                        "url": "u"}]},
-            {"draft": False, "assets": [{"name": "demo_exe_v1.1.zip",
-                                         "size": 1, "url": "u"}]}]
-    src = [{"name": "demo_v1.3.zip", "path": "release/demo_v1.3.zip",
-            "type": "file", "size": 5}]
-    old = gu._open
-    gu._open = lambda url, token, accept=None, timeout=0, headers=None: R(
-        json.dumps(rels if "/releases" in url else src).encode())
+    t = gu.UpdateTarget("o", "r", "demo", "1.0", ".", "Demo.pyw")
+    sys.frozen = True
     try:
-        e = gu.latest_exe(t, "tok")
-        assert e.version == "1.2" and e.kind == "exe" and e.sha256 == "ab", e
-        rel, new = gu.check_exe(t, "tok")          # 1.2 новее 1.0 — её
-        assert new and rel.version == "1.2"
-        t.current = "1.2"                          # exe 1.2, а в main уже 1.3
-        rel, new = gu.check_exe(t, "tok")
-        assert not new and rel.kind == "wait" and rel.version == "1.3", rel
-        t.current = "1.3"
-        rel, new = gu.check_exe(t, "tok")
-        assert not new and rel.kind != "wait"
+        gu.check(t, "tok")
+        raise AssertionError("собранный exe пошёл обновляться")
+    except gu.UpdateError as e:
+        assert "exe" in str(e), e
     finally:
-        gu._open = old
-    # распаковка: папка Demo/ внутри снимается, метка «готово», версия сверяется
-    root = tempfile.mkdtemp(prefix="t_exe_")
-    try:
-        t = gu.UpdateTarget("o", "r", "demo", "1.0", root, "Demo.pyw")
-        z = os.path.join(root, gu.EXE_DL)
-        _exe_zip(z, "1.2")
-        items = gu.stage_exe(t, z, "1.2")
-        assert items == ["Demo.exe", "README_RU.txt", "_internal",
-                         "exe_version.txt", "vendor"], items
-        assert gu.staged_exe(t) == "1.2" and not os.path.exists(z)
-        _exe_zip(z, "1.2")
-        try:
-            gu.stage_exe(t, z, "1.3")
-            raise AssertionError("чужая версия сборки принята")
-        except gu.UpdateError:
-            pass
-        assert gu.staged_exe(t) == ""              # испорченное — стёрто
-        _exe_zip(z, "1.2", exe="Other.exe")
-        try:
-            gu.stage_exe(t, z, "1.2")
-            raise AssertionError("сборка без Demo.exe принята")
-        except gu.UpdateError:
-            pass
-        # подмена прошлый раз не удалась — причина читается и файл стирается
-        with open(os.path.join(root, gu.EXE_FAILED), "w") as fh:
-            fh.write("busy: _internal \n")
-        assert "_internal" in gu.swap_failed(root)
-        assert gu.swap_failed(root) == ""
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-    # помощник: только ASCII, CRLF, ждёт pid, vendor дополняет, есть откат
-    bat = gu.swap_script(["Demo.exe", "README_RU.txt", "_internal",
-                          "exe_version.txt", "vendor", gu.EXE_READY],
-                         "Demo.exe", 4321)
-    bat.encode("ascii")
-    assert "\r\n" in bat and "\n" not in bat.replace("\r\n", "")
-    assert 'find " 4321 "' in bat and 'start "" "Demo.exe" --after-update 4321' in bat
-    assert 'xcopy ".gh_update_new\\vendor" "vendor\\"' in bat
-    assert 'move /y "vendor"' not in bat and gu.EXE_READY not in bat.split(":mainok")[1]
-    assert ":rollback" in bat and 'move /y ".gh_update_old\\_internal" "_internal"' in bat
-    assert "%%" not in bat                       # в bat «%%» — это буквальный «%»
-    try:
-        gu.swap_script(["a&b.exe"], "Demo.exe", 1)
-        raise AssertionError("опасное имя пропущено")
-    except gu.UpdateError:
-        pass
-
-
-def t_exe_download():
-    """★ 1.3.0: сборка качается по временной ссылке без токена, обрыв —
-    докачка, sha256 сверяется."""
-    import hashlib
-    data = bytes(range(256)) * 300
-    root = tempfile.mkdtemp(prefix="t_exed_")
-    seen = []
-
-    def fake(url, token, accept=None, timeout=0, headers=None):
-        assert url.startswith("https://store/") and not token, (url, token)
-        rng = (headers or {}).get("Range", "")
-        start = int(rng[6:-1]) if rng else 0
-        seen.append(start)
-        r = R(data[start:start + 25000])
-        r.status = 206 if start else 200
-        return r
-    old = (gu._open, gu._asset_link, gu.time.sleep)
-    gu._open = fake
-    gu._asset_link = lambda url, token: ("https://store/f?sig=1", False)
-    gu.time.sleep = lambda s: None
-    try:
-        t = gu.UpdateTarget("o", "r", "demo", "1.0", root, "Demo.pyw")
-        rel = gu.Release("1.2", "demo_exe_v1.2.zip", "", len(data),
-                         "https://api/assets/1", kind="exe",
-                         sha256=hashlib.sha256(data).hexdigest())
-        p = gu.download_exe(t, "tok", rel)
-        with open(p, "rb") as fh:
-            assert fh.read() == data
-        assert seen[:2] == [0, 25000], seen
-        os.remove(p)
-        rel.sha256 = "0" * 64
-        try:
-            gu.download_exe(t, "tok", rel)
-            raise AssertionError("испорченная сборка принята")
-        except gu.UpdateError:
-            pass
-        assert not os.path.exists(os.path.join(root, gu.EXE_DL))
-    finally:
-        gu._open, gu._asset_link, gu.time.sleep = old
-        shutil.rmtree(root, ignore_errors=True)
+        del sys.frozen
+    assert gu.wait_previous(["x"]) is False
 
 
 def t_qt(shots=None):
@@ -414,7 +304,7 @@ if __name__ == "__main__":
     shots = os.environ.get("SHOTS")
     bad = 0
     for f in (t_changelog, t_versions, t_install, t_cleanup, t_own,
-              t_check_download, t_exe, t_exe_download, lambda: t_qt(shots)):
+              t_check_download, t_python_only, lambda: t_qt(shots)):
         try:
             f(); print("OK  ", getattr(f, "__name__", "qt"))
         except Exception as e:
