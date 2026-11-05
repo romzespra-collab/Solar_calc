@@ -1,9 +1,10 @@
 @echo off
 chcp 65001 >nul
-rem build_exe.bat  v1.5.0 — сборка solar_calc.exe
+rem build_exe.bat  v1.5.1 — сборка solar_calc.exe
+rem v1.5.1: нужен Python 3.12+ (было 3.10+).
 cd /d "%~dp0"
 echo === [1/4] Проверка Python ===
-where python >nul 2>nul || (echo Python не найден. Установите Python 3.10+ с python.org & pause & exit /b 1)
+where python >nul 2>nul || (echo Python не найден. Установите Python 3.12+ с python.org & pause & exit /b 1)
 python --version
 echo === [2/4] Установка библиотек ===
 python -m pip install --disable-pip-version-check -r requirements.txt || (echo Ошибка установки библиотек & pause & exit /b 1)

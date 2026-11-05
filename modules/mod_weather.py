@@ -143,7 +143,7 @@ def parse(doc, lat, lon, now_utc=None):
     """Ответ Open-Meteo → словарь для WeatherState.apply(). Время — в UTC (по utc_offset_seconds)."""
     if not isinstance(doc, dict) or not isinstance(doc.get("current"), dict):
         raise RuntimeError("в ответе нет текущей погоды")
-    now_utc = now_utc or dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+    now_utc = now_utc or dt.datetime.now(dt.UTC).replace(tzinfo=None)
     off = dt.timedelta(seconds=int(doc.get("utc_offset_seconds") or 0))
     c = doc["current"]
     cur = dict(temp=_f(c.get("temperature_2m")), feels=_f(c.get("apparent_temperature")),

@@ -18,7 +18,7 @@ UNIX0 = dt.datetime(1970, 1, 1)
 
 # ─────────────── время станции ───────────────
 def utc_now():
-    return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+    return dt.datetime.now(dt.UTC).replace(tzinfo=None)
 
 
 def to_local(utc, zone):
