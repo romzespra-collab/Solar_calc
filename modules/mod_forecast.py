@@ -123,7 +123,7 @@ def now_power(s, cur, utc=None):
     G, D, ta = cur.get("ghi"), cur.get("dhi"), cur.get("temp")
     if G is None or ta is None:
         return None
-    utc = utc or dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+    utc = utc or dt.datetime.now(dt.UTC).replace(tzinfo=None)
     lat, lon = float(s["lat"]), float(s["lon"])
     m = to_local(utc, (s["tz"], s["dst"])).month - 1
     cosz, zen, az, g0 = sun(lat, lon, utc.timetuple().tm_yday, utc.hour + utc.minute / 60.0)
@@ -136,5 +136,5 @@ def now_power(s, cur, utc=None):
 
 
 def sun_now(s, utc=None):
-    utc = utc or dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+    utc = utc or dt.datetime.now(dt.UTC).replace(tzinfo=None)
     return sun_altaz_utc(float(s["lat"]), float(s["lon"]), utc)
