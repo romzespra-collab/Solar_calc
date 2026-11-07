@@ -1,2 +1,2 @@
 *.bat text eol=crlf
-release/ export-ignore
+release export-ignore
