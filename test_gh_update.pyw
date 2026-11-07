@@ -1,8 +1,28 @@
-# -*- coding: utf-8 -*-
-"""Тесты общего модуля обновления gh_update (без сети). Запуск:
+"""Тесты общего модуля обновления gh_update 1.4.3 (без сети). Запуск:
     python test_gh_update.pyw  [папка_с_модулями]"""
 import io, json, os, shutil, sys, tempfile, zipfile
-sys.path.insert(0, sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _mod_dir():
+    """Папка с gh_update.py: аргумент; рядом с тестом или в его подпапке (app/,
+    modules/ …); тест в tests/ — ещё корень проекта и его подпапки. Выше
+    корня проекта не ищем (там чужие программы)."""
+    if len(sys.argv) > 1:
+        return sys.argv[1]
+    roots = [_HERE]
+    if os.path.basename(_HERE).lower() in ("tests", "test"):
+        roots.append(os.path.dirname(_HERE))
+    first = ("app", "modules", "system")
+    for r in roots:
+        subs = sorted(os.listdir(r), key=lambda x: (x not in first, x.lower()))
+        for d in (r,) + tuple(os.path.join(r, x) for x in subs):
+            if os.path.isfile(os.path.join(d, "gh_update.py")):
+                return d
+    return _HERE
+
+
+sys.path.insert(0, _mod_dir())
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import gh_update as gu
 
@@ -150,6 +170,57 @@ def t_cleanup():
         open(os.path.join(app_dir, "backup", "чужое.txt"), "w").write("x")
         assert not gu.drop_old_backup(app_dir) and ex("backup/чужое.txt")
     finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def t_leftover_masks():
+    """1.4.3: gone с масками — старые файлы прежних версий в корне; данные — нет."""
+    root = tempfile.mkdtemp(prefix="t_mask_")
+    try:
+        names = ("CHANGELOG_v5_12_1.md", "CHANGELOG_v5_12_3.md", "CHANGELOG.md",
+                 "README.txt", "README.md", "cfg.json", "CHANGELOG_v1.json", "x.log")
+        for fn in names:
+            open(os.path.join(root, fn), "w").write("x")
+        os.makedirs(os.path.join(root, "docs"))
+        open(os.path.join(root, "docs", "CHANGELOG_v1.md"), "w").write("x")
+        got = gu.drop_leftovers(root, ("CHANGELOG_v*.md", "README.txt", "*", "*.log"))
+        ex = lambda fn: os.path.exists(os.path.join(root, fn))
+        assert not ex("CHANGELOG_v5_12_1.md") and not ex("CHANGELOG_v5_12_3.md"), got
+        assert not ex("README.txt"), got
+        for fn in ("CHANGELOG.md", "README.md", "cfg.json", "CHANGELOG_v1.json", "x.log",
+                   "docs/CHANGELOG_v1.md"):
+            assert ex(fn), "стёрто лишнее: " + fn
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def t_replace_retry():
+    """1.4.3: файл на миг занят (WinError 5 / 32) — замена с повтором."""
+    real, calls = os.replace, []
+
+    def busy(src, dst, n=2):
+        calls.append(src)
+        if len(calls) <= n:
+            raise PermissionError(32, "занят")
+        return real(src, dst)
+    root = tempfile.mkdtemp(prefix="t_repl_")
+    try:
+        a, b = os.path.join(root, "a"), os.path.join(root, "b")
+        open(a, "w").write("new")
+        open(b, "w").write("old")
+        gu.os.replace = busy
+        gu._replace(a, b)
+        assert open(b).read() == "new" and len(calls) == 3, calls
+        open(a, "w").write("x")
+        calls.clear()
+        gu.os.replace = lambda s, d: busy(s, d, n=99)
+        try:
+            gu._replace(a, b, tries=3)
+            raise AssertionError("занятый файл не дал ошибку")
+        except PermissionError:
+            pass
+    finally:
+        gu.os.replace = real
         shutil.rmtree(root, ignore_errors=True)
 
 
@@ -303,8 +374,9 @@ def t_qt(shots=None):
 if __name__ == "__main__":
     shots = os.environ.get("SHOTS")
     bad = 0
-    for f in (t_changelog, t_versions, t_install, t_cleanup, t_own,
-              t_check_download, t_python_only, lambda: t_qt(shots)):
+    for f in (t_changelog, t_versions, t_install, t_cleanup, t_leftover_masks,
+              t_replace_retry, t_own, t_check_download, t_resume, t_python_only,
+              lambda: t_qt(shots)):
         try:
             f(); print("OK  ", getattr(f, "__name__", "qt"))
         except Exception as e:
