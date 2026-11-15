@@ -1,6 +1,6 @@
-"""Тесты общего модуля обновления gh_update 1.4.3 (без сети). Запуск:
+"""Тесты общего модуля обновления gh_update 1.5.3 (без сети). Запуск:
     python test_gh_update.pyw  [папка_с_модулями]"""
-import io, json, os, shutil, sys, tempfile, zipfile
+import io, json, os, shutil, sys, tempfile, threading, time, zipfile
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -92,11 +92,14 @@ def _install(layout, ver_in_zip, ver_name):
 def t_install():
     for lay in ("VERSION", "custom", "main"):
         _install(lay, "1.1", "1.1")
-        try:
-            _install(lay, "1.1", "2.0")
-            raise AssertionError("чужая версия принята: " + lay)
-        except gu.UpdateError:
-            pass
+        for ver_in, ver_name in (("1.1", "2.0"), ("1.1", "1.2"), ("1.1.1", "1.1")):   # 1.4.5: и близкие номера
+            try:
+                _install(lay, ver_in, ver_name)
+                raise AssertionError(f"чужая версия принята: {lay} {ver_in} / {ver_name}")
+            except gu.UpdateError:
+                pass
+        _install(lay, "12.21.0", "12.21")           # 1.4.5: «12.21» = «12.21.0» (как в newer)
+        _install(lay, "12.21", "12.21.0")
 
 
 def _zip(root, files):
@@ -136,6 +139,8 @@ def t_cleanup():
         for fn in ("app/old.py", "app/__pycache__/old.cpython-313.pyc",
                    "backup"):
             assert not ex(fn), "не стёрто: " + fn
+        # 1.5.1: стёрто, а не перенесено — папки .gh_update_old нет
+        assert not ex(".gh_update_old") and t.moved_to == ""
         for fn in ("Old.pyw", "my.bat", "cfg.json", "notes.txt", "app/user.json", "logs/x.py",
                    "Rec/a.mp4", "venvx/m.py", "app/keep.py", "app/new.py"):
             assert ex(fn), "стёрто лишнее: " + fn
@@ -152,6 +157,8 @@ def t_cleanup():
         assert not ex("app/new.py") and not ex("pics/a.png") and not ex("pics"), \
             "по списку не стёрто"
         assert set(t.removed) == {"app/new.py", "pics/a.png"}, t.removed
+        # 1.5.1: убранное по списку стёрто, папки .gh_update_old нет
+        assert not ex(".gh_update_old")
         for fn in ("app/mine.py", "my.bat", "cfg.json", "notes.txt", "Rec/a.mp4"):
             assert ex(fn), "стёрто лишнее (по списку): " + fn
         # 1.2.1: user_dirs — без списка свои файлы там не трогаем
@@ -169,6 +176,220 @@ def t_cleanup():
         os.makedirs(os.path.join(app_dir, "backup"))
         open(os.path.join(app_dir, "backup", "чужое.txt"), "w").write("x")
         assert not gu.drop_old_backup(app_dir) and ex("backup/чужое.txt")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _prog(root, files, name="prog"):
+    app_dir = os.path.join(root, name)
+    for fn, txt in files.items():
+        f = os.path.join(app_dir, fn)
+        os.makedirs(os.path.dirname(f), exist_ok=True)
+        open(f, "w", encoding="utf-8").write(txt)
+    return app_dir
+
+
+def t_token():
+    """1.5.0: пробельные символы в токене вычищаются; значение токена не попадает в текст ошибки."""
+    assert gu.clean_token(" github_pat_AAA\r\n BBB\t\n") == "github_pat_AAABBB"
+    assert gu.clean_token(None) == ""
+    r = gu._req("https://api.github.com/x", "github_pat_AAA\nBBB ")
+    assert r.get_header("Authorization") == "Bearer github_pat_AAABBB"
+    t = gu.UpdateTarget("o", "r", "demo", "1.0", ".", "Demo.pyw")
+    for tok in ("github_pat_СЕКРЕТ123", "github_pat_SECRET\x00\x7f456"):
+        try:
+            gu.check(t, tok)
+            raise AssertionError("кривой токен принят")
+        except gu.UpdateError as e:
+            assert "недопустимые символы" in str(e), e
+            assert "СЕКРЕТ" not in str(e) and "SECRET" not in str(e) and "Bearer" not in str(e), e
+    # что бы ни бросил http.client (ValueError со значением заголовка) — наружу без него
+    old = gu.urllib.request.urlopen
+
+    def boom(*a, **k):
+        raise ValueError("Invalid header value b'Bearer github_pat_SECRET'")
+    gu.urllib.request.urlopen = boom
+    try:
+        gu.check(t, "github_pat_SECRET")
+        raise AssertionError("ValueError не превращён в понятную ошибку")
+    except gu.UpdateError as e:
+        assert "SECRET" not in str(e) and e.__cause__ is None, e
+    finally:
+        gu.urllib.request.urlopen = old
+
+
+def t_git_copy():
+    """1.5.0: копия из git (.git рядом) — install() отказывает, ничего не меняя."""
+    root = tempfile.mkdtemp(prefix="t_git_")
+    try:
+        app_dir = _prog(root, {"Demo.pyw": "моя правка", "app/a.py": "x", "app/old.py": "x",
+                               ".git/HEAD": "ref"})
+        gu.write_manifest(app_dir, {"Demo.pyw", "app/a.py", "app/old.py"})
+        before = sorted(os.listdir(os.path.join(app_dir, "app")))
+        t = gu.UpdateTarget("o", "r", "demo", "1.0", app_dir, "Demo.pyw")
+        z = _zip(root, {"Demo.pyw": 'VERSION = "1.1"\n', "app/a.py": "y"})
+        try:
+            gu.install(t, z, "1.1")
+            raise AssertionError("копия из git обновилась")
+        except gu.UpdateError as e:
+            assert "git pull" in str(e), e
+        assert open(os.path.join(app_dir, "Demo.pyw"), encoding="utf-8").read() == "моя правка"
+        assert sorted(os.listdir(os.path.join(app_dir, "app"))) == before
+        assert not os.path.exists(os.path.join(app_dir, gu.OLD_DIR)) and not os.path.exists(z)
+        assert gu.is_git_copy(app_dir)
+        t.git_ok = True                              # явное разрешение — ставится
+        gu.install(t, _zip(root, {"Demo.pyw": 'VERSION = "1.1"\n', "app/a.py": "y"}), "1.1")
+        assert open(os.path.join(app_dir, "app/a.py"), encoding="utf-8").read() == "y"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def t_incomplete():
+    """1.5.0: неполный архив не ставится (доля убираемого, ключевые файлы); ALLOW_DROP — снимает."""
+    root = tempfile.mkdtemp(prefix="t_inc_")
+    try:
+        old = {"Demo.pyw": "old", "app/__init__.py": ""}
+        old.update({"app/m%d.py" % i: "x" for i in range(10)})
+        app_dir = _prog(root, old)
+        gu.write_manifest(app_dir, set(old))
+        t = gu.UpdateTarget("o", "r", "demo", "1.0", app_dir, "Demo.pyw")
+
+        def refused(files, why):
+            try:
+                gu.install(t, _zip(root, files), "1.1")
+                raise AssertionError("неполный архив поставлен: " + why)
+            except gu.UpdateError as e:
+                assert "неполный" in str(e), e
+            assert open(os.path.join(app_dir, "Demo.pyw"), encoding="utf-8").read() == "old", why
+            assert all(os.path.exists(os.path.join(app_dir, f)) for f in old), why
+            assert not os.path.exists(os.path.join(app_dir, gu.OLD_DIR)), why
+        new = {"Demo.pyw": 'VERSION = "1.1"\n'}
+        refused(new, "один главный файл")
+        refused(dict(new, **{"app/m0.py": "y"}), "пакет без __init__.py")
+        full = dict(old, **new)
+        t.must_have = ("app/core.py",)
+        refused(full, "нет файла из must_have")
+        t.must_have = ()
+        part = {k: v for k, v in full.items() if k not in ("app/m1.py", "app/m2.py")}
+        gu.install(t, _zip(root, part), "1.1")          # 2 из 12 — обычное обновление
+        assert not os.path.exists(os.path.join(app_dir, "app/m1.py"))
+        t.current = "1.1"
+        small = dict(new, **{"Demo.pyw": 'VERSION = "1.2"\n', "app/__init__.py": "", gu.ALLOW_DROP: ""})
+        gu.install(t, _zip(root, small), "1.2")         # так и задумано — ставится
+        assert not os.path.exists(os.path.join(app_dir, "app/m5.py"))
+        assert not os.path.exists(os.path.join(app_dir, gu.OLD_DIR))    # 1.5.1: стёрто, не перенесено
+        assert not os.path.exists(os.path.join(app_dir, gu.ALLOW_DROP))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def t_move_unknown():
+    """1.5.1: старый код стирается, а не переносится: первое обновление без списка убирает незнакомые
+    файлы кода из папок программы (как до 1.5.0); свои папки и данные — на месте; папка
+    .gh_update_old — след 1.5.0 — стирается при обновлении и из архива не ставится."""
+    root = tempfile.mkdtemp(prefix="t_mv_")
+    try:
+        app_dir = _prog(root, {
+            "Demo.pyw": "old", "app/__init__.py": "", "app/a.py": "x",
+            "app/my_plugin.py": "мой модуль", "app/TODO.md": "заметки", "app/data.json": "данные",
+            "app/__pycache__/my_plugin.cpython-313.pyc": "pyc",
+            "tools/root_tool.py": "свой", "my_script.py": "свой", "backup/v0.9/мои.txt": "копия",
+            ".gh_update_old/v0.9/app/was.py": "след 1.5.0",
+        })
+        logs = []
+        t = gu.UpdateTarget("o", "r", "demo", "1.0", app_dir, "Demo.pyw")
+        gu.install(t, _zip(root, {"Demo.pyw": 'VERSION = "1.1"\n', "app/__init__.py": "",
+                                  "app/a.py": "y"}), "1.1", log=logs.append)
+        ex = lambda fn: os.path.exists(os.path.join(app_dir, fn))  # noqa: E731
+        for fn in ("app/my_plugin.py", "app/TODO.md", gu.OLD_DIR):
+            assert not ex(fn), "не стёрто: " + fn
+        assert t.moved_to == "" and not any("перенесены" in x for x in logs), logs
+        assert any(gu.OLD_DIR in x and "стёрта" in x for x in logs), logs
+        for fn in ("app/data.json", "tools/root_tool.py", "my_script.py", "backup/v0.9/мои.txt"):
+            assert ex(fn), "тронуто лишнее: " + fn
+        # служебная папка из архива не ставится
+        t.current = "1.1"
+        gu.install(t, _zip(root, {"Demo.pyw": 'VERSION = "1.2"\n', "app/__init__.py": "", "app/a.py": "z",
+                                  gu.OLD_DIR + "/v1.0/app/x.py": "подмена"}), "1.2")
+        assert not ex(gu.OLD_DIR)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def t_unsafe_paths():
+    """Опасные пути в архиве (.., абсолютные) — отказ, вне папки программы ничего не появляется."""
+    root = tempfile.mkdtemp(prefix="t_slip_")
+    try:
+        app_dir = _prog(root, {"Demo.pyw": "old"})
+        t = gu.UpdateTarget("o", "r", "demo", "1.0", app_dir, "Demo.pyw")
+        for bad in ("../evil.py", "demo/../../evil.py", "/abs_evil_gh_update.py", "a/../../evil.py"):
+            p = os.path.join(root, "a.zip")
+            with zipfile.ZipFile(p, "w") as z:
+                z.writestr("Demo.pyw", 'VERSION = "1.1"\n')
+                z.writestr(bad, "evil")
+            try:
+                gu.install(t, p, "1.1")
+                raise AssertionError("опасный путь принят: " + bad)
+            except gu.UpdateError as e:
+                assert "опасный путь" in str(e), e
+            assert sorted(os.listdir(root)) == ["prog"], os.listdir(root)
+            assert not os.path.exists("/abs_evil_gh_update.py")
+            assert open(os.path.join(app_dir, "Demo.pyw"), encoding="utf-8").read() == "old"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def t_rollback():
+    """Сбой посреди замены файлов — возвращаются старые, *.upd не остаётся, новые файлы убраны."""
+    root = tempfile.mkdtemp(prefix="t_rb_")
+    real, n = gu._replace, [0]
+
+    def flaky(src, dst, tries=6):
+        n[0] += 1
+        if n[0] == 3:
+            raise PermissionError(5, "занят")
+        return real(src, dst, tries)
+    try:
+        old = {"Demo.pyw": "OLD", "app/__init__.py": "OLD", "app/a.py": "OLD", "app/b.py": "OLD"}
+        app_dir = _prog(root, old)
+        gu.write_manifest(app_dir, set(old))
+        t = gu.UpdateTarget("o", "r", "demo", "1.0", app_dir, "Demo.pyw")
+        new = {"Demo.pyw": 'VERSION = "1.1"\n', "app/__init__.py": "N", "app/a.py": "N", "app/b.py": "N",
+               "app/c.py": "N", "app/d.py": "N"}
+        gu._replace = flaky
+        try:
+            gu.install(t, _zip(root, new), "1.1")
+            raise AssertionError("сбой замены не дал ошибку")
+        except gu.UpdateError as e:
+            assert "оставлена прежняя версия" in str(e), e
+        finally:
+            gu._replace = real
+        left = []
+        for dp, _dn, fns in os.walk(app_dir):
+            left += [os.path.relpath(os.path.join(dp, f), app_dir).replace(os.sep, "/") for f in fns]
+        assert sorted(left) == sorted([*old, gu.MANIFEST]), left
+        assert all(open(os.path.join(app_dir, f), encoding="utf-8").read() == "OLD" for f in old)
+        assert gu.read_manifest(app_dir) == set(old)
+    finally:
+        gu._replace = real
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def t_backup_user():
+    """1.5.0: backup/ пользователя (есть список MANIFEST либо внутри не только копии программы) — на месте."""
+    root = tempfile.mkdtemp(prefix="t_bk_")
+    try:
+        app_dir = _prog(root, {"Demo.pyw": "old", "app/__init__.py": "", "backup/v1.0/Demo.pyw": "моя копия"})
+        gu.write_manifest(app_dir, {"Demo.pyw", "app/__init__.py"})
+        t = gu.UpdateTarget("o", "r", "demo", "1.0", app_dir, "Demo.pyw")
+        gu.install(t, _zip(root, {"Demo.pyw": 'VERSION = "1.1"\n', "app/__init__.py": ""}), "1.1")
+        assert os.path.exists(os.path.join(app_dir, "backup/v1.0/Demo.pyw")), "backup пользователя убрана"
+        assert gu.drop_old_backup(app_dir, known={"Demo.pyw"})                  # одни копии программы — можно
+        os.makedirs(os.path.join(app_dir, "backup", "v1.0"))
+        open(os.path.join(app_dir, "backup", "v1.0", "заметки.txt"), "w").write("x")
+        assert not gu.drop_old_backup(app_dir, known={"Demo.pyw"})
+        assert not gu.drop_old_backup(app_dir)
+        assert os.path.exists(os.path.join(app_dir, "backup/v1.0/заметки.txt"))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -252,6 +473,259 @@ def t_own():
         assert gu.MANIFEST not in gu.read_manifest(app_dir)
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+
+def t_user_dirs_manifest():
+    """1.4.4: по списку MANIFEST свои папки (modules/, tools/) не чистятся; прочее — как раньше."""
+    root = tempfile.mkdtemp(prefix="t_udm_")
+    try:
+        app_dir = os.path.join(root, "prog")
+        for fn in ("Demo.pyw", "modules/src_mine.py", "Tools/x.py", "app/old.py"):
+            f = os.path.join(app_dir, fn)
+            os.makedirs(os.path.dirname(f), exist_ok=True)
+            open(f, "w", encoding="utf-8").write("x")
+        ex = lambda fn: os.path.exists(os.path.join(app_dir, fn))  # noqa: E731
+        gu.write_manifest(app_dir, {"Demo.pyw", "modules/src_mine.py", "Tools/x.py", "app/old.py"})
+        t = gu.UpdateTarget("o", "r", "demo", "1.0", app_dir, "Demo.pyw")
+        gu.install(t, _zip(root, {"Demo.pyw": 'VERSION = "1.1"\n', "modules/mod_a.py": "a"}), "1.1")
+        assert ex("modules/src_mine.py"), "по списку стёрт файл из modules/"
+        assert ex("Tools/x.py"), "по списку стёрт файл из tools/ (регистр папки не важен)"   # 1.4.5
+        assert not ex("app/old.py"), "по списку не стёрто старое вне своих папок"
+        assert "modules/src_mine.py" not in t.removed, t.removed
+        # 1.4.5: свои папки программы (user_dirs), в том числе вложенные, — по списку тоже не чистятся
+        mine = ("plugins/p.py", "app/plugins/mine.py", "app/Plugins2/m.py")
+        for fn in mine + ("app/pluginsx.py", "app/gone.py"):
+            f = os.path.join(app_dir, fn)
+            os.makedirs(os.path.dirname(f), exist_ok=True)
+            open(f, "w", encoding="utf-8").write("x")
+        gu.write_manifest(app_dir, {"Demo.pyw"} | set(mine) | {"app/pluginsx.py", "app/gone.py"})
+        t2 = gu.UpdateTarget("o", "r", "demo", "1.1", app_dir, "Demo.pyw",
+                             user_dirs=("plugins", "app/plugins/", "app\\plugins2"))
+        gu.install(t2, _zip(root, {"Demo.pyw": 'VERSION = "1.2"\n'}), "1.2")
+        for fn in mine:
+            assert ex(fn), "по списку стёрт файл из своей папки (user_dirs): " + fn
+        assert not ex("app/pluginsx.py") and not ex("app/gone.py"), "не стёрто старое рядом со своей папкой"
+        # без списка (stale_files) вложенная своя папка — тоже мимо
+        os.remove(os.path.join(app_dir, gu.MANIFEST))
+        open(os.path.join(app_dir, "app/old2.py"), "w").write("x")
+        t2.current = "1.2"
+        gu.install(t2, _zip(root, {"Demo.pyw": 'VERSION = "1.3"\n', "app/a.py": "a"}), "1.3")
+        assert ex("app/plugins/mine.py") and ex("app/Plugins2/m.py"), "без списка стёрта вложенная своя папка"
+        assert not ex("app/old2.py"), "без списка не стёрт старый код"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def t_example_json():
+    """1.4.4: шаблоны *.example.json обновляются; настройки *.json — никогда."""
+    root = tempfile.mkdtemp(prefix="t_exj_")
+    try:
+        app_dir = os.path.join(root, "prog")
+        os.makedirs(app_dir)
+        old = {"Demo.pyw": "old", "accounts.json": "мои", "config.json": "мои", "profiles.json": "мои",
+               "accounts.example.json": "старый шаблон",
+               "modules/my.example.json": "моё", "data/x.example.json": "моё"}
+        for fn, txt in old.items():
+            f = os.path.join(app_dir, fn)
+            os.makedirs(os.path.dirname(f), exist_ok=True)
+            open(f, "w", encoding="utf-8").write(txt)
+        new = {"Demo.pyw": 'VERSION = "1.1"\n', "accounts.json": "чужие", "config.json": "чужие",
+               "profiles.json": "чужие", "accounts.example.json": "новый шаблон",
+               "config.example.json": "новый шаблон",
+               "modules/my.example.json": "чужое", "data/x.example.json": "чужое"}
+        t = gu.UpdateTarget("o", "r", "demo", "1.0", app_dir, "Demo.pyw")
+        gu.install(t, _zip(root, new), "1.1")
+        rd = lambda fn: open(os.path.join(app_dir, fn), encoding="utf-8").read()  # noqa: E731
+        for fn in ("accounts.json", "config.json", "profiles.json"):
+            assert rd(fn) == "мои", "перезаписаны настройки: " + fn
+        for fn in ("accounts.example.json", "config.example.json"):
+            assert rd(fn) == "новый шаблон", "шаблон не обновлён: " + fn
+        for fn in ("modules/my.example.json", "data/x.example.json"):     # 1.4.5: шаблоны — только из корня
+            assert rd(fn) == "моё", "перезаписан *.example.json в подпапке: " + fn
+        assert gu._kept("data/x.json", gu.KEEP_DEFAULT) and not gu._kept("a.example.json", gu.KEEP_DEFAULT)
+        assert gu._kept("data/x.example.json", gu.KEEP_DEFAULT) and gu._kept("a\\b.example.json", gu.KEEP_DEFAULT)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def t_rollback_retry():
+    """1.4.4: ошибка посреди установки — откат старых файлов тем же повтором замены (файл на миг занят)."""
+    root = tempfile.mkdtemp(prefix="t_rb_")
+    real, state = os.replace, {"n": 0}
+    try:
+        app_dir = os.path.join(root, "prog")
+        os.makedirs(app_dir)
+        for fn in ("Demo.pyw", "a.py", "b.py"):
+            open(os.path.join(app_dir, fn), "w", encoding="utf-8").write("old")
+
+        def flaky(src, dst):
+            state["n"] += 1
+            if os.path.basename(dst) == "b.py" and not state.get("rb"):
+                state["rb"] = True                      # установка b.py — ошибка → откат
+                raise OSError(22, "сломалось")
+            if state.get("rb"):
+                state.setdefault("calls", []).append((os.path.basename(src), os.path.basename(dst)))
+            if state.get("rb") and state["n"] % 2:       # откат: каждая вторая замена — «занят»
+                state["busy"] = state.get("busy", 0) + 1
+                raise PermissionError(32, "занят")
+            return real(src, dst)
+        gu.os.replace, slp = flaky, gu.time.sleep
+        gu.time.sleep = lambda s: None
+        t = gu.UpdateTarget("o", "r", "demo", "1.0", app_dir, "Demo.pyw")
+        try:
+            gu.install(t, _zip(root, {"Demo.pyw": 'VERSION = "1.1"\n', "a.py": "new", "b.py": "new"}), "1.1")
+            raise AssertionError("ошибка установки не поднялась")
+        except gu.UpdateError as e:
+            assert "прежняя версия" in str(e), e
+        finally:
+            gu.os.replace, gu.time.sleep = real, slp
+        for fn in ("Demo.pyw", "a.py", "b.py"):
+            assert open(os.path.join(app_dir, fn), encoding="utf-8").read() == "old", "не откатился " + fn
+        assert not [x for x in os.listdir(app_dir) if x.endswith(".upd")], os.listdir(app_dir)
+        # 1.4.5: откат — именно копия рядом (*.upd) + замена с повтором, а не copy2 поверх занятого файла
+        calls = state.get("calls", [])
+        for fn in ("Demo.pyw", "a.py"):
+            assert (fn + ".upd", fn) in calls, f"откат {fn} — не через замену с повтором: {calls}"
+        assert state.get("busy"), "откат ни разу не наткнулся на «занят» — повтор не проверен"
+    finally:
+        gu.os.replace = real
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _raises(fn, text=""):
+    try:
+        fn()
+    except gu.UpdateError as e:
+        assert text in str(e), e
+        return True
+    return False
+
+
+def t_zip_guard():
+    """1.4.5: опасные пути в архиве (zip-slip) и битый архив — понятная ошибка, ничего не поставлено."""
+    root = tempfile.mkdtemp(prefix="t_zg_")
+    evil = f"evil_{os.getpid()}.py"                 # своё имя на запуск: след прошлого запуска тест не ломает
+    try:
+        app_dir = os.path.join(root, "prog")
+        os.makedirs(app_dir)
+        open(os.path.join(app_dir, "Demo.pyw"), "w", encoding="utf-8").write("old")
+        t = gu.UpdateTarget("o", "r", "demo", "1.0", app_dir, "Demo.pyw")
+        tmpd = tempfile.gettempdir()
+        for bad in (f"../{evil}", f"x/../../{evil}"):
+            p = _zip(root, {"Demo.pyw": 'VERSION = "1.1"\n', bad: "x"})
+            assert _raises(lambda: gu.install(t, p, "1.1"), "опасный путь"), "опасный путь принят: " + bad
+            assert not os.path.exists(p), "архив после отказа не удалён"
+            for dp, _dns, fns in os.walk(root):
+                assert evil not in fns, "файл записан мимо папки распаковки: " + dp
+            assert not os.path.exists(os.path.join(tmpd, evil)), "файл записан мимо папки распаковки: " + tmpd
+        assert open(os.path.join(app_dir, "Demo.pyw"), encoding="utf-8").read() == "old"
+        root_abs = os.path.abspath(root)
+        assert gu._safe(root_abs, "a/b.py") == os.path.join(root_abs, "a", "b.py")
+        assert _raises(lambda: gu._safe(root_abs, "../" + os.path.basename(root_abs) + "x/a.py"), "опасный путь")
+        # битый архив: испорчен байт данных (CRC) — testzip() до распаковки
+        zb = io.BytesIO()
+        with zipfile.ZipFile(zb, "w", zipfile.ZIP_STORED) as z:
+            z.writestr("demo/Demo.pyw", 'VERSION = "1.1"\n')
+            z.writestr("demo/big.py", "# " + "ABCDEFGH" * 200)
+        raw = bytearray(zb.getvalue())
+        i = raw.index(b"ABCDEFGH" * 4) + 100
+        raw[i] ^= 0xFF
+        p = os.path.join(root, "bad.zip")
+        open(p, "wb").write(bytes(raw))
+        assert _raises(lambda: gu.install(t, p, "1.1"), "архив повреждён"), "битый архив принят"
+        assert open(os.path.join(app_dir, "Demo.pyw"), encoding="utf-8").read() == "old"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            os.remove(os.path.join(tempfile.gettempdir(), evil))
+        except OSError:
+            pass
+
+
+def t_manifest_unreadable():
+    """1.4.1 / 1.4.5: список MANIFEST есть, но не читается (занят / мусор не в UTF-8) — пустой set:
+    установка проходит и ничего не стирает (None означало бы чистку «по архиву»)."""
+    root = tempfile.mkdtemp(prefix="t_mu_")
+    try:
+        app_dir = os.path.join(root, "prog")
+        for fn in ("Demo.pyw", "app/old.py"):
+            f = os.path.join(app_dir, fn)
+            os.makedirs(os.path.dirname(f), exist_ok=True)
+            open(f, "w", encoding="utf-8").write("x")
+        assert gu.read_manifest(app_dir) is None                # списка нет
+        man = os.path.join(app_dir, gu.MANIFEST)
+        os.mkdir(man)                                           # open() → OSError (Linux: IsADirectory, Windows: Permission)
+        got = gu.read_manifest(app_dir)
+        assert got == set() and got is not None, got
+        os.rmdir(man)
+        t = gu.UpdateTarget("o", "r", "demo", "1.0", app_dir, "Demo.pyw")
+        for n, junk in enumerate((b"\xff\xfe\x80garbage\n", b"app/old.py\n\x80\x81\n"), 1):
+            open(man, "wb").write(junk)
+            got = gu.read_manifest(app_dir)
+            assert got == set() and got is not None, got
+            gu.install(t, _zip(root, {"Demo.pyw": f'VERSION = "1.{n}"\n', "app/a.py": "a"}), f"1.{n}")
+            assert os.path.exists(os.path.join(app_dir, "app/old.py")), "нечитаемый список — а старое стёрто"
+            assert t.removed == [], t.removed
+            assert gu.read_manifest(app_dir) == {"Demo.pyw", "app/a.py"}     # новый список записан
+            t.current = f"1.{n}"
+        real = open
+
+        def busy(f, *a, **k):
+            if str(f).endswith(gu.MANIFEST):
+                raise PermissionError(13, "занят")
+            return real(f, *a, **k)
+        gu.open = busy
+        try:
+            got = gu.read_manifest(app_dir)
+        finally:
+            del gu.open
+        assert got == set() and got is not None, got
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def t_download_guards():
+    """1.4.5: архив скачался не целиком (размер) — ошибка и без sha; на GitHub уже версия новее — понятная ошибка."""
+    data = b"zipdata-zipdata"
+    t = gu.UpdateTarget("o", "r", "demo", "1.0", ".", "Demo.pyw")
+    old, slp = gu._open, gu.time.sleep
+    gu.time.sleep = lambda s: None
+    made = []
+    real_mk = gu.tempfile.mkstemp
+
+    def mk(*a, **k):
+        fd, p = real_mk(*a, **k)
+        made.append(p)
+        return fd, p
+    gu.tempfile.mkstemp = mk
+    try:
+        # размер в списке GitHub больше, чем пришло байт; sha нет — ловит только сверка размера
+        items = [{"name": "demo_v1.1.zip", "path": "release/demo_v1.1.zip", "type": "file",
+                  "sha": "", "size": len(data) + 7}]
+        gu._open = lambda url, token, accept=None, timeout=0, headers=None: R(
+            json.dumps(items).encode() if "raw" not in str(accept)
+            else (b"" if (headers or {}).get("Range") else data))
+        rel, new = gu.check(t, "tok")
+        assert new and rel.size == len(data) + 7 and not rel.sha, rel
+        assert _raises(lambda: gu.download(t, "tok", rel), "не целиком"), "неполный архив принят"
+        assert not made, "неполный архив сохранён: %s" % made
+        # пока окно было открыто, в release/ появилась версия новее (прежнего архива уже нет)
+        items[:] = [{"name": "demo_v1.1.zip", "path": "release/demo_v1.1.zip", "type": "file",
+                     "sha": gu._blob_sha1(data), "size": len(data)}]
+        gu._open = lambda url, token, accept=None, timeout=0, headers=None: R(
+            json.dumps(items).encode() if "raw" not in str(accept) else data)
+        rel, new = gu.check(t, "tok")
+        items[:] = [{"name": "demo_v1.2.zip", "path": "release/demo_v1.2.zip", "type": "file",
+                     "sha": gu._blob_sha1(data), "size": len(data)}]
+        assert _raises(lambda: gu.download(t, "tok", rel), "уже версия 1.2"), "скачан архив, которого уже нет"
+        assert not made, made
+    finally:
+        gu._open, gu.time.sleep, gu.tempfile.mkstemp = old, slp, real_mk
+        for p in made:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
 
 def t_check_download():
@@ -366,17 +840,165 @@ def t_qt(shots=None):
     assert d.btn_next.text().startswith("Готово")
     assert step_for_error("токен не видит репозиторий o/r") == 2
     saved = {}
-    b = q.UpdateBox(t, lambda: {"token": "", "auto": True, "every_h": 24}, saved.update)
+    b = q.UpdateBox(t, lambda: {"token": " tok\nen ", "auto": True, "every_h": 24}, saved.update)
+    left = b._timer.remainingTime()
     b.cb_every.setCurrentIndex(b.cb_every.findData(3))
     assert saved.get("every_h") == 3
+    # 1.5.0: токен чистится; смена «Каждые» до первой автопроверки её не откладывает
+    assert saved.get("token") == "token" and b.ed_token.text() == "token"
+    # грубый таймер Qt округляет срок до ±5 % — сравниваем с запасом
+    assert 0 < b._timer.remainingTime() <= q.AUTO_FIRST_MS * 1.06, (left, b._timer.remainingTime())
+    b._first_done = True
+    b.cb_every.setCurrentIndex(b.cb_every.findData(6))
+    assert b._timer.remainingTime() > q.AUTO_FIRST_MS
+    assert b._err_text(ValueError("b'Bearer token'"), "token") == "b'Bearer ***'"
+    # 1.5.0: копия из git — «Обновить» отказывает до скачивания
+    gd = tempfile.mkdtemp(prefix="t_qgit_")
+    try:
+        os.makedirs(os.path.join(gd, ".git"))
+        tg = gu.UpdateTarget("o", "r", "demo", "1.0", gd, "Demo.pyw")
+        bg = q.UpdateBox(tg, lambda: {"token": "tok", "auto": False}, lambda c: None)
+        bg._rel = gu.Release("1.1", "release/demo_v1.1.zip", "", 1)
+        bg.update_now()
+        assert not bg.busy() and "git pull" in bg.lbl.text(), bg.lbl.text()
+    finally:
+        shutil.rmtree(gd, ignore_errors=True)
+
+
+def t_old_dir_listed():
+    """1.5.2: папка .gh_update_old/ (след 1.5.0) стирается, но перед этим в журнал
+    пишется, что в ней лежало (там могли быть свои скрипты пользователя)."""
+    root = tempfile.mkdtemp(prefix="t_old_")
+    try:
+        assert gu.VERSION == "1.5.3", gu.VERSION
+        app_dir = os.path.join(root, "demo")
+        old = os.path.join(app_dir, gu.OLD_DIR, "1.0", "app")
+        os.makedirs(old)
+        for fn in ("my_script.py", "gone.py"):
+            with open(os.path.join(old, fn), "w") as fh:
+                fh.write("x")
+        with open(os.path.join(app_dir, "Demo.pyw"), "w") as fh:
+            fh.write('VERSION = "1.0"\n')
+        logs = []
+        t = gu.UpdateTarget("o", "r", "demo", "1.0", app_dir, "Demo.pyw")
+        gu.install(t, _zip(root, {"Demo.pyw": 'VERSION = "1.1"\n'}), "1.1", log=logs.append)
+        assert not os.path.exists(os.path.join(app_dir, gu.OLD_DIR))
+        text = "\n".join(logs)
+        assert "1.0/app/my_script.py" in text and "1.0/app/gone.py" in text, text
+        assert "файлов: 2" in text, text
+        assert gu._drop_old_dir(app_dir, logs.append) is False      # папки уже нет
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def t_qt_install():
+    """1.4.4: скачано → can_install ещё раз (GUI-поток) → установка; отказ — архив удалён, «Обновить» снова
+    доступна; двойной щелчок — одно скачивание."""
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    app = QApplication.instance() or QApplication([])
+    _KEEP.append(app)
+    import gh_update_qt as q
+    dl, inst, paths, boxes, asks = [], [], [], [], []
+    main_thr = threading.current_thread()
+
+    def fake_dl(t, token, rel, progress=None, cancel=None):   # 1.5.0: cancel
+        dl.append(threading.current_thread())
+        time.sleep(0.15)
+        fd, p = tempfile.mkstemp(suffix=".zip")
+        os.close(fd)
+        paths.append(p)
+        return p
+
+    def fake_inst(t, path, ver, log=None):
+        inst.append((threading.current_thread(), os.path.exists(path), ver))
+        time.sleep(0.15)
+        os.remove(path)
+        return ["a"]
+
+    def pump(cond, limit=5.0):
+        end = time.time() + limit
+        while time.time() < end and not cond():
+            app.processEvents()
+            time.sleep(0.01)
+        app.processEvents()
+        return cond()
+    saved = (gu.download, gu.install, QMessageBox.information, QMessageBox.question)
+    gu.download, gu.install = fake_dl, fake_inst
+    QMessageBox.information = staticmethod(lambda *a, **k: boxes.append(a[-1]))
+    QMessageBox.question = staticmethod(lambda *a, **k: asks.append(a[-1]) or QMessageBox.No)
+    try:
+        state = {"why": "", "thr": []}
+
+        def can():
+            state["thr"].append(threading.current_thread())
+            return state["why"]
+        # 1.5.3: своя пустая папка, а не «.» — тест запускают и из копии git (там отказ до скачивания)
+        t = gu.UpdateTarget("o", "r", "demo", "1.0", tempfile.mkdtemp(prefix="ghu_qt_"), "Demo.pyw")
+        b = q.UpdateBox(t, lambda: {"token": "tok", "auto": False}, lambda c: None, can_install=can)
+        b._rel = gu.Release("1.1", "release/demo_v1.1.zip", "", 10)
+        # двойной щелчок — одно скачивание
+        b.update_now()
+        b.update_now()
+        assert b.busy() and not b.btn_update.isEnabled()
+        # пока качали, началась работа → отказ: архив удалён, кнопка снова доступна, установки не было
+        state["why"] = "идёт заливка"
+        assert pump(lambda: not b.busy()), "после отказа окно осталось «занято»"
+        assert len(dl) == 1, "двойной щелчок — %d скачивания" % len(dl)
+        assert dl[0] is not main_thr, "скачивание в GUI-потоке"
+        assert not inst, "установлено, хотя идёт работа"
+        assert paths and not os.path.exists(paths[0]), "архив после отказа не удалён"
+        assert b.btn_update.isEnabled() and b.btn_check.isEnabled(), "после отказа «Обновить» недоступна"
+        assert "идёт заливка" in b.lbl.text(), b.lbl.text()
+        assert len(state["thr"]) == 2 and all(x is main_thr for x in state["thr"]), \
+            "can_install: до скачивания и после, оба — в GUI-потоке"
+        assert t.current == "1.0"
+        # работа ещё идёт — щелчок: сообщение, скачивания нет
+        b.update_now()
+        assert len(dl) == 1 and len(boxes) == 1 and not b.busy(), (len(dl), boxes)
+        # работа кончилась — скачивание → повторная проверка → установка
+        state["why"] = ""
+        b.update_now()
+        assert pump(lambda: bool(inst)), "установка не началась"
+        assert b.busy(), "во время установки окно можно закрыть"
+        b.update_now()                                      # щелчок во время установки — ничего
+        assert pump(lambda: not b.busy()), "установка не закончилась"
+        assert len(dl) == 2 and len(inst) == 1, (len(dl), len(inst))
+        assert inst[0][1] and inst[0][2] == "1.1" and inst[0][0] is not main_thr, inst
+        assert t.current == "1.1" and len(asks) == 1, (t.current, asks)
+        assert not b.btn_restart.isHidden() and b.btn_update.isHidden()
+        # can_install упал после скачивания — как отказ (не ставим, архив удалён)
+        t.current = "1.0"
+        b.btn_update.show()
+        n = {"n": 0}
+
+        def boom():
+            n["n"] += 1
+            if n["n"] > 1:
+                raise RuntimeError("сломалась проверка")
+            return ""
+        b.can_install = boom
+        b.update_now()
+        assert pump(lambda: not b.busy() and len(dl) == 3)
+        assert len(inst) == 1 and not os.path.exists(paths[-1]) and "сломалась проверка" in b.lbl.text()
+    finally:
+        gu.download, gu.install, QMessageBox.information, QMessageBox.question = saved
+        for p in paths:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
     shots = os.environ.get("SHOTS")
     bad = 0
     for f in (t_changelog, t_versions, t_install, t_cleanup, t_leftover_masks,
-              t_replace_retry, t_own, t_check_download, t_resume, t_python_only,
-              lambda: t_qt(shots)):
+              t_replace_retry, t_own, t_user_dirs_manifest, t_example_json, t_rollback_retry,
+              t_zip_guard, t_manifest_unreadable, t_download_guards,
+              t_check_download, t_resume, t_python_only,
+              t_token, t_git_copy, t_incomplete, t_move_unknown, t_unsafe_paths,
+              t_rollback, t_backup_user, t_old_dir_listed,
+              lambda: t_qt(shots), t_qt_install):
         try:
             f(); print("OK  ", getattr(f, "__name__", "qt"))
         except Exception as e:
