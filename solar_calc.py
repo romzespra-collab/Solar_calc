@@ -1,4 +1,4 @@
-"""solar_calc.py  v1.11.9
+"""solar_calc.py  v1.11.10
 Солнечный калькулятор — точка входа: авто-установка библиотек, запуск окна, --selftest.
 Расчёт: солнце → угол/азимут → панели → схема Ns×Np → провод и контакты → MPPT (встроенный в инвертор
 или отдельный) → ток заряда → АКБ → инвертор. Данные солнца: встроенные (≈Киев) или PVGIS.
@@ -14,6 +14,10 @@
   modules/gh_update*.py обновление с GitHub (общий модуль gh_update): страница «🔄 Обновление»
 
 Журнал:
+v1.11.10: порядок в modules/ после обновления: код программы лежит в modules/, а модуль обновления эту
+        папку не чистит (у других программ она — своя у пользователя), и файлы, убранные из программы,
+        оставались навсегда. Теперь при запуске они переносятся в _other/modules/ (mod_cleanup.py) —
+        не стираются. Работает только после обновления с GitHub, не в копии из git и не в EXE.
 v1.11.9: обновление с GitHub: общий модуль gh_update 1.5.3 (один на все программы) — неполный архив
         не ставится (раньше мог стереть по списку почти всю программу); копия из git не обновляется (в ней —
         git pull); «можно ли ставить» проверяется ещё раз после скачивания; скачивание при выходе из
@@ -43,14 +47,10 @@ v1.11.2: Обновление: модуль gh_update 1.1.3 — в облаке 
         докачивается при обрыве.
 v1.11.1: обновление модуля gh_update 1.1.1: «Что нового» из журнала проекта (шапка solar_calc.py); инструкция
         «Как получить токен» — шаги 7 и 8 без обрезки и с настоящим файлом версии.
-v1.11.0: обновление с GitHub (общий модуль gh_update 1.1.0): страница «🔄 Обновление» на боковой панели — токен
-        «только чтение», ветка, автопроверка (через 30 с и раз в 12 ч), анимация скачивания, резервная копия в
-        backup/, перезапуск; нашлась новая версия — «⬆» на боковой панели и «⬆ X.Y.Z» в строке состояния;
-        инструкция «Как получить токен» с картинками. Настройки, профили и журналы при обновлении не трогаются.
 Более ранние версии — в истории git.
 """
 APP_NAME = "Солнечный калькулятор"
-VERSION = "1.11.9"
+VERSION = "1.11.10"
 
 import sys
 import os
@@ -146,7 +146,7 @@ MODULES = ("modules.mod_base", "modules.mod_panels", "modules.mod_equipment", "m
            "modules.mod_page_results", "modules.mod_page_tools", "modules.mod_astro", "modules.mod_stars",
            "modules.mod_weather", "modules.mod_forecast", "modules.mod_wx_draw", "modules.mod_sky",
            "modules.mod_page_sky", "modules.mod_constructor", "modules.mod_region", "modules.mod_green",
-           "modules.mod_page_green", "solar_calc_qt")
+           "modules.mod_page_green", "modules.mod_cleanup", "solar_calc_qt")
 
 
 def _excepthook(tp, val, tb):
@@ -209,6 +209,7 @@ def selftest():
         if not (gh_update.newer("1.10.0", "1.9.16") and gh_update_qt.UpdatePage and gh_update_help.TokenHelpDialog):
             raise RuntimeError("сравнение версий")
         lines.append(f"Обновление с GitHub (gh_update {gh_update.VERSION}): OK")
+        lines.append(_selftest_cleanup())
     except Exception as e:
         ok = False
         lines.append(f"Обновление с GitHub: ОШИБКА {e}")
@@ -220,6 +221,44 @@ def selftest():
     except Exception:
         pass
     return 0 if ok else 1
+
+
+def own_modules():
+    """Файлы запущенной версии в modules/ — их уборка не трогает."""
+    names = [m.split(".", 1)[1] + ".py" for m in MODULES if m.startswith("modules.")]
+    return names + ["gh_update.py", "gh_update_qt.py", "gh_update_help.py", "__init__.py"]
+
+
+def _selftest_cleanup():
+    """Уборка modules/ на временной папке: старое — в _other/, своё и данные — на месте."""
+    import tempfile
+    from modules import gh_update, mod_cleanup
+    with tempfile.TemporaryDirectory(prefix="solar_st_") as d:
+        m = os.path.join(d, "modules")
+        os.makedirs(m)
+        for fn in ("mod_base.py", "mod_old.py", "data.tsv.gz"):
+            Path(m, fn).write_text("# " + fn, encoding="utf-8")
+        need = ["mod_base.py"]
+        if mod_cleanup.sweep_modules(d, need):                      # списка нет — не трогаем
+            raise RuntimeError("уборка без списка установленного")
+        gh_update.write_manifest(d, ["solar_calc.py"])
+        if mod_cleanup.sweep_modules(d, need):                      # список старее программы
+            raise RuntimeError("уборка по устаревшему списку")
+        gh_update.write_manifest(d, ["solar_calc.py", "modules/mod_base.py"])
+        got = mod_cleanup.sweep_modules(d, need)
+        left = sorted(os.listdir(m))
+        if got != ["modules/mod_old.py"] or left != ["data.tsv.gz", "mod_base.py"] \
+                or not os.path.isfile(os.path.join(d, "_other", "modules", "mod_old.py")):
+            raise RuntimeError(f"уборка modules/: {got}, осталось {left}")
+        Path(m, "mod_old.py").write_text("# другой", encoding="utf-8")   # то же имя, другое содержимое
+        mod_cleanup.sweep_modules(d, need)
+        if sorted(os.listdir(os.path.join(d, "_other", "modules"))) != ["mod_old.py", "mod_old_1.py"]:
+            raise RuntimeError("уборка modules/: одноимённый файл не сохранён")
+        os.makedirs(os.path.join(d, ".git"))
+        Path(m, "mod_dev.py").write_text("# dev", encoding="utf-8")
+        if mod_cleanup.sweep_modules(d, need):                      # копия из git — не трогаем
+            raise RuntimeError("уборка в копии из git")
+    return "Уборка modules/ (в _other/): OK"
 
 
 def main():
@@ -240,6 +279,11 @@ def main():
     # после обновления: подождать, пока старая копия закроется
     from modules import gh_update
     gh_update.wait_previous(sys.argv)
+    try:                                   # v1.11.10: убранное из программы — из modules/ в _other/modules/
+        from modules import mod_cleanup
+        mod_cleanup.sweep_modules(str(APP_ROOT), own_modules(), log=log.info)
+    except Exception as e:
+        log.warning(f"⚠ уборка modules/: {e}")
     app.setStyle("Fusion")
     QLocale.setDefault(QLocale(QLocale.Russian, QLocale.Ukraine))
     tr = QTranslator(app)

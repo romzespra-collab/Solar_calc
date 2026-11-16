@@ -1,4 +1,5 @@
-# solar_calc.spec  v1.11.9 — PyInstaller, onefile, без консоли
+# solar_calc.spec  v1.11.10 — PyInstaller, onefile, без консоли
+# v1.11.10: + modules.mod_cleanup (уборка modules/ после обновления; в EXE не работает)
 # v1.11.9: без изменений сборки (модуль gh_update 1.5.3), версия поднята
 # v1.11.8: без изменений сборки (модуль gh_update 1.4.3), версия поднята
 # v1.11.7: без изменений сборки (модуль gh_update 1.4.2), версия поднята
@@ -24,7 +25,7 @@ a = Analysis(
                    'modules.mod_page_settings', 'modules.mod_page_results', 'modules.mod_page_tools',
                    'modules.mod_astro', 'modules.mod_stars', 'modules.mod_weather', 'modules.mod_forecast',
                    'modules.mod_wx_draw', 'modules.mod_sky', 'modules.mod_page_sky', 'modules.mod_constructor', 'modules.mod_region',
-                   'modules.gh_update', 'modules.gh_update_qt', 'modules.gh_update_help'],
+                   'modules.gh_update', 'modules.gh_update_qt', 'modules.gh_update_help', 'modules.mod_cleanup'],
     hookspath=[],
     runtime_hooks=[],
     excludes=['PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngine',
