@@ -1,7 +1,11 @@
-"""mod_config.py  v1.11.0
+"""mod_config.py  v1.13.0
 параметры станции по умолчанию, config.json: загрузка, проверка, сохранение
 
 Журнал:
+v1.13.0: config.json — через общий модуль safe_json: запись атомарная, прежний целый — config.json.bak; испорченный
+        не затирается (копия config.json.bad-<время>, берётся .bak; нет и его — по умолчанию, а файл не
+        перезаписывается, пока его не исправят или не удалят); ошибка записи — в лог один раз, а не на каждое
+        сохранение. Было: испорченный переименовывался в config.json.bak.
 v1.11.0: обновление с GitHub — upd_token (токен «только чтение»), upd_auto, upd_branch, upd_every_h; неверный
         тип — по умолчанию.
 v1.10.0: sys["green"] — зелёный тариф (подключение, смета, окупаемость, чек-лист, заметки) с проверкой
@@ -27,7 +31,8 @@ v1.9.1: cons_pos — места узлов конструктора, перес�
 import json
 import math
 import re
-import os
+
+import safe_json
 
 from .mod_base import CONFIG_PATH, WEATHER, log
 from .mod_sun import BUILTIN_SUN
@@ -211,19 +216,12 @@ def _pv_ok(pv):
 
 def load_config():
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
-    if not CONFIG_PATH.exists():
-        return cfg
-    try:
-        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
-        if not isinstance(data, dict):
-            raise ValueError("ожидался объект JSON")
-    except Exception as e:
-        bak = CONFIG_PATH.with_name("config.json.bak")
-        try:
-            CONFIG_PATH.replace(bak)
-        except OSError:
-            pass
-        log.warning(f"⚠ config.json испорчен ({e}) — сохранён как {bak.name}, настройки по умолчанию")
+    # safe_json: BOM (Блокнот) читается; испорченный — берётся config.json.bak (копия испорченного —
+    # config.json.bad-<время>); нет и его — по умолчанию, а config.json не перезаписывается
+    data = safe_json.load(CONFIG_PATH, None, kind=dict)
+    if data is None:
+        if safe_json.is_protected(CONFIG_PATH):
+            log.warning(f"⚠ config.json: {safe_json.last_error(CONFIG_PATH)} — настройки по умолчанию")
         return cfg
     cfg.update(data)
     try:
@@ -271,12 +269,16 @@ def load_config():
     return cfg
 
 
+_cfg_error = {"text": ""}
+
+
 def save_config(cfg):
-    try:
-        tmp = CONFIG_PATH.with_name("config.json.tmp")
-        tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, CONFIG_PATH)
+    """Атомарно, с config.json.bak (safe_json). True / False; ошибка — в лог один раз, а не на каждое сохранение."""
+    if safe_json.save(CONFIG_PATH, cfg):
+        _cfg_error["text"] = ""
         return True
-    except Exception as e:
-        log.error(f"✗ Не удалось сохранить config.json: {e}")
-        return False
+    err = safe_json.last_error(CONFIG_PATH)
+    if err != _cfg_error["text"]:
+        _cfg_error["text"] = err
+        log.error(f"✗ Не удалось сохранить config.json: {err}")
+    return False

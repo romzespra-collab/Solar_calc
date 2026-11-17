@@ -1,0 +1,19 @@
+{
+  "repo": "romzespra-collab/Solar_calc",
+  "programs": [
+    {
+      "name": "solar_calc",
+      "dir": "",
+      "files": [
+        ["solar_calc.py", "VERSION = \"{v}\""],
+        ["solar_calc.py", "solar_calc.py  v{v}"],
+        ["README.md", "(solar_calc) v{v}"],
+        ["solar_calc.spec", "solar_calc.spec  v{v}"]
+      ],
+      "headers": true,
+      "headers_skip": ["build_exe.bat"],
+      "changelog": {"file": "solar_calc.py", "after": "re:^Журнал:$", "template": "v{v}: {msg}\n"},
+      "allow_in_zip": []
+    }
+  ]
+}

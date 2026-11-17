@@ -1,4 +1,4 @@
-# Солнечный калькулятор (solar_calc) v1.12.0
+# Солнечный калькулятор (solar_calc) v1.13.0
 
 Калькулятор выработки домашней солнечной станции с MPPT и АКБ: сколько реально доходит до АКБ
 в ясный / средний / пасмурный день каждого месяца и за год, куда теряется энергия, хватит ли
@@ -104,7 +104,12 @@ Solar_calc, Contents: Read-only) — кнопка «?» рядом с полем
 
 ## Сборка EXE
 
-`build_exe.bat` → `dist\solar_calc.exe` (PyInstaller по `solar_calc.spec`, затем самопроверка EXE).
+`build_exe.bat` → поиск утечек (`check_leaks.py`: токены, пароли) → `dist\solar_calc.exe` (PyInstaller по
+`solar_calc.spec`, затем самопроверка EXE).
+
+Новая версия (для разработки): `python bump_version.py minor -m "что нового"` — версия во всех местах из
+`release.json` и запись в журнал в шапке `solar_calc.py`; после commit — `python release.py`: архив
+`release/solar_calc_vX.Y.Z.zip` (старый удаляется, архив проверяется на утечки).
 
 ## Точность
 
@@ -122,10 +127,14 @@ Solar_calc, Contents: Read-only) — кнопка «?» рядом с полем
 | `modules/mod_*.py` | расчёт (`mod_model`, `mod_checks`), оборудование (`mod_panels`, `mod_equipment`), солнце и погода (`mod_sun`, `mod_pvgis`, `mod_region`, `mod_weather`, `mod_forecast`), небо (`mod_astro`, `mod_stars`, `mod_sky`), зелёный тариф (`mod_green`), страницы (`mod_page_*`), конструктор (`mod_constructor`), настройки (`mod_config`, `mod_fields`), вид (`mod_theme`, `mod_widgets`, `mod_wx_draw`) |
 | `modules/panels_db.tsv.gz` | полная база панелей |
 | `modules/gh_update*.py` | обновление с GitHub (общий модуль) |
+| `safe_json.py` | надёжная запись `config.json` и профилей станции: атомарно, `.bak`, битый файл не затирается (общий модуль) |
+| `app_log.py` | журнал `solar_calc.log`: ротация, пароли и токены скрыты, падения — в `solar_calc_crash.log` (общий модуль) |
+| `bump_version.py`, `release.py`, `check_leaks.py`, `release.json` | для разработки: версия во всех местах, архив в `release/`, поиск утечек (общие утилиты, в EXE не входят) |
 | `app_icon.py`, `app_icon_qt.py`, `app_icon_pack.dat` | значок программы (общий модуль app_icon 1.2.0): рисунки, .ico, ярлыки, окно выбора, встроенная база значков (Material Design Icons — Apache 2.0, Simple Icons — CC0) |
 | `test_gh_update.pyw` | тесты модуля обновления (без сети) |
 | `solar_calc.spec`, `build_exe.bat`, `requirements.txt` | сборка EXE и библиотеки |
 | `моя_станция_Краматорск.json` | пример профиля станции |
 | `research_notes/`, `reports/` | заметки разработки: обзор похожих калькуляторов и идеи |
-| `config.json` | создаётся сам: настройки, параметры станции, данные солнца |
+| `config.json` | создаётся сам: настройки, параметры станции, данные солнца; `config.json.bak` — прежняя целая копия (если `config.json` испорчен, берётся она, а испорченный сохраняется как `config.json.bad-<время>`) |
+| `solar_calc.log`, `solar_calc_crash.log` | создаются сами: журнал (пароли и токены в нём скрыты) и след необработанной ошибки (только при ней) |
 | `app_icon.json`, `solar_calc.ico` | создаются сами, если выбрать значок программы (обновление `*.json` не трогает) |
