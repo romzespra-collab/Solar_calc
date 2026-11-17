@@ -1,7 +1,8 @@
-"""mod_page_tools.py  v1.10.0
+"""mod_page_tools.py  v1.12.0
 страницы «Угол», «Провод», «Данные PVGIS», «Цвета»
 
 Журнал:
+v1.12.0: «Цвета» → карточка «Тема» — кнопка «🎨 Значок программы…» (общий модуль app_icon).
 v1.10.0: страница «Сравнение схем S×P» убрана (схема поля выбирается в конструкторе станции).
 v1.10.0: погода региона — выбор источника (Open-Meteo ERA5 / PVGIS-SARAH3), статистика дней (ясные, пасмурные,
          часы солнца) в карточке и в логе после загрузки.
@@ -470,6 +471,8 @@ class ToolPages:
         self.seg_theme.setMaximumWidth(320)
         cv.addWidget(self.seg_theme)
         cv.addWidget(_btn("💾 Сохранить настройки", "primary", "Сохранить config.json", self._save_all), 0, Qt.AlignLeft)
+        cv.addWidget(_btn("🎨 Значок программы…", None, "Значок окна, панели задач и ярлыков: встроенные значки, "
+                          "поиск в интернете, своя картинка", self.show_icon_dialog), 0, Qt.AlignLeft)
         v.addWidget(fr)
         fr, cv = _card("О программе")
         cv.addWidget(_lab(

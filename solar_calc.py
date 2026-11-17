@@ -1,4 +1,4 @@
-"""solar_calc.py  v1.11.10
+"""solar_calc.py  v1.12.0
 Солнечный калькулятор — точка входа: авто-установка библиотек, запуск окна, --selftest.
 Расчёт: солнце → угол/азимут → панели → схема Ns×Np → провод и контакты → MPPT (встроенный в инвертор
 или отдельный) → ток заряда → АКБ → инвертор. Данные солнца: встроенные (≈Киев) или PVGIS.
@@ -12,8 +12,13 @@
   modules/mod_region.py погода региона за 5 лет (Open-Meteo / PVGIS-SARAH3)
   modules/mod_green.py  зелёный тариф (Украина): смета, ОСР, взаимозачёт, окупаемость; страница — mod_page_green
   modules/gh_update*.py обновление с GitHub (общий модуль gh_update): страница «🔄 Обновление»
+  app_icon*.py, app_icon_pack.dat  значок программы (общий модуль app_icon): окно выбора — «🎨 Цвета»
 
 Журнал:
+v1.12.0: значок программы: окно выбора (общий модуль app_icon 1.2.0) — «🎨 Цвета» → «Тема» →
+        «🎨 Значок программы…»; встроенная база ~370 значков, поиск в интернете, своя картинка; .ico и
+        ярлыки. Выбор — в app_icon.json рядом с программой; не выбирали — всё как раньше. --selftest
+        проверяет модуль и окно выбора.
 v1.11.10: порядок в modules/ после обновления: код программы лежит в modules/, а модуль обновления эту
         папку не чистит (у других программ она — своя у пользователя), и файлы, убранные из программы,
         оставались навсегда. Теперь при запуске они переносятся в _other/modules/ (mod_cleanup.py) —
@@ -45,12 +50,10 @@ v1.11.3: обновление с GitHub (gh_update 1.2.0): старый код, 
         резервной папки backup больше нет; настройки не трогает.
 v1.11.2: Обновление: модуль gh_update 1.1.3 — в облаке анимации значок GitHub над надписью; архив
         докачивается при обрыве.
-v1.11.1: обновление модуля gh_update 1.1.1: «Что нового» из журнала проекта (шапка solar_calc.py); инструкция
-        «Как получить токен» — шаги 7 и 8 без обрезки и с настоящим файлом версии.
 Более ранние версии — в истории git.
 """
 APP_NAME = "Солнечный калькулятор"
-VERSION = "1.11.10"
+VERSION = "1.12.0"
 
 import sys
 import os
@@ -213,6 +216,11 @@ def selftest():
     except Exception as e:
         ok = False
         lines.append(f"Обновление с GitHub: ОШИБКА {e}")
+    try:
+        lines.append(_selftest_icon())
+    except Exception as e:
+        ok = False
+        lines.append(f"Значок программы (app_icon): ОШИБКА {e}")
     lines.append("ИТОГ: " + ("OK" if ok else "ОШИБКА"))
     txt = "\n".join(lines)
     print(txt)
@@ -221,6 +229,27 @@ def selftest():
     except Exception:
         pass
     return 0 if ok else 1
+
+
+def _selftest_icon():
+    """Общий модуль app_icon: рисунки и .ico; окно выбора открывается и закрывается (без экрана)."""
+    import tempfile
+    if os.name != "nt":
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication(sys.argv[:1])
+    import app_icon
+    import app_icon_qt
+    errs = app_icon.selftest()
+    if errs:
+        raise RuntimeError("; ".join(errs[:3]))
+    with tempfile.TemporaryDirectory(prefix="solar_icon_") as d:
+        dlg = app_icon_qt.IconDialog(app_icon.AppIcon("solar_calc", d))
+        QTimer.singleShot(0, dlg.reject)
+        dlg.exec()
+    app.processEvents()
+    return f"Значок программы (app_icon {app_icon.VERSION}): OK"
 
 
 def own_modules():
@@ -289,7 +318,14 @@ def main():
     tr = QTranslator(app)
     if tr.load(QLocale(QLocale.Russian), "qtbase", "_", QLibraryInfo.path(QLibraryInfo.TranslationsPath)):
         app.installTranslator(tr)
-    from solar_calc_qt import App
+    from solar_calc_qt import App, icon_chosen, make_icons
+    try:                                   # свой значок (app_icon.json) → окно и solar_calc.ico
+        app.app_icons = make_icons()
+        if icon_chosen(app.app_icons):
+            app.app_icons.ensure()
+            app.setWindowIcon(app.app_icons.icon())
+    except Exception as e:
+        log.warning(f"⚠ Значок программы: {e}")
     w = App()
     w.show()
     sys.exit(app.exec())

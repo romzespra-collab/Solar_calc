@@ -1,7 +1,9 @@
-"""solar_calc_qt.py  v1.11.10
+"""solar_calc_qt.py  v1.12.0
 Главное окно программы (PySide6): боковая панель, страницы, лог, статус.
 
 Журнал:
+v1.12.0: значок программы — общий модуль app_icon 1.2.0: make_icons(), show_icon_dialog()
+         (кнопка «🎨 Значок программы…» — на странице «🎨 Цвета», карточка «Тема»).
 v1.11.10: без изменений окна — версия вместе с программой (уборка modules/ — в solar_calc.py)
 v1.11.9: без изменений окна — версия вместе с программой (gh_update 1.5.3).
 v1.11.8: без изменений окна — версия вместе с программой; разовая чистка README.txt (gh_update.drop_leftovers).
@@ -51,6 +53,21 @@ from modules.mod_page_sky import SkyPages
 from modules.mod_page_green import GreenPages
 from modules.mod_weather import WeatherState
 from modules import gh_update, gh_update_qt
+
+
+def make_icons():
+    """Значок программы (общий модуль app_icon): выбор в app_icon.json рядом с программой,
+    файл solar_calc.ico. Своего значка у программы нет — «По умолчанию» app_icon.DEFAULT."""
+    import sys
+
+    import app_icon
+    target = sys.executable if getattr(sys, "frozen", False) else APP_ROOT / "solar_calc.pyw"
+    return app_icon.AppIcon("solar_calc", APP_ROOT, title=app_name(), target=target, default=app_icon.DEFAULT)
+
+
+def icon_chosen(icons):
+    """Пользователь уже выбирал значок (есть app_icon.json или его .bak)."""
+    return icons.cfg_file.exists() or icons.cfg_file.with_name(icons.cfg_file.name + ".bak").exists()
 
 
 class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWindow):
@@ -344,6 +361,29 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWind
             self._wx_refresh()
         elif cur == "green":
             self._green_update()
+
+    # ---- значок программы (общий модуль app_icon)
+    @property
+    def icons(self):
+        """Значок программы; один на приложение."""
+        app = QApplication.instance()
+        if getattr(app, "app_icons", None) is None:
+            app.app_icons = make_icons()
+        return app.app_icons
+
+    def show_icon_dialog(self):
+        import app_icon_qt
+
+        def applied(qicon):
+            app_icon_qt.apply_everywhere(qicon)
+            log.info("🎨 Значок программы изменён")
+        dlg = app_icon_qt.IconDialog(self.icons, self, on_apply=applied)
+        p = self._p()                                    # только в этом окне: кнопки-квадраты — в цветах темы
+        dlg.setStyleSheet(dlg.styleSheet() + f" QToolButton {{ background: {p['panel2']}; border: 1px solid "
+                          f"{p['line']}; border-radius: 6px; padding: 2px; }}")
+        dlg.resize(dlg.size().expandedTo(dlg.sizeHint()))   # шрифт темы крупнее — окну места по подсказке
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+        dlg.exec()
 
     def _p(self):
         return _QT_THEMES.get(self.cfg.get("theme", "dark"), _QT_THEMES["dark"])

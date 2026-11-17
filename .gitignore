@@ -9,3 +9,8 @@ config.json.*
 backup/
 *.zip
 !release/*.zip
+# значок программы (app_icon): выбор пользователя и .ico
+app_icon.json
+app_icon.json.bak
+app_icon_cache.json
+solar_calc.ico
