@@ -1,4 +1,5 @@
-# solar_calc.spec  v1.11.10 — PyInstaller, onefile, без консоли
+# solar_calc.spec  v1.12.0 — PyInstaller, onefile, без консоли
+# v1.12.0: + app_icon, app_icon_qt, PySide6.QtSvg (значок программы), база значков app_icon_pack.dat
 # v1.11.10: + modules.mod_cleanup (уборка modules/ после обновления; в EXE не работает)
 # v1.11.9: без изменений сборки (модуль gh_update 1.5.3), версия поднята
 # v1.11.8: без изменений сборки (модуль gh_update 1.4.3), версия поднята
@@ -18,14 +19,15 @@ a = Analysis(
     ['solar_calc.pyw'],
     pathex=['.'],
     binaries=[],
-    datas=[('modules/panels_db.tsv.gz', 'modules')],
+    datas=[('modules/panels_db.tsv.gz', 'modules'), ('app_icon_pack.dat', '.')],
     hiddenimports=['solar_calc', 'solar_calc_qt', 'modules.mod_base', 'modules.mod_panels', 'modules.mod_equipment',
                    'modules.mod_sun', 'modules.mod_fields', 'modules.mod_config', 'modules.mod_model',
                    'modules.mod_checks', 'modules.mod_pvgis', 'modules.mod_theme', 'modules.mod_widgets',
                    'modules.mod_page_settings', 'modules.mod_page_results', 'modules.mod_page_tools',
                    'modules.mod_astro', 'modules.mod_stars', 'modules.mod_weather', 'modules.mod_forecast',
                    'modules.mod_wx_draw', 'modules.mod_sky', 'modules.mod_page_sky', 'modules.mod_constructor', 'modules.mod_region',
-                   'modules.gh_update', 'modules.gh_update_qt', 'modules.gh_update_help', 'modules.mod_cleanup'],
+                   'modules.gh_update', 'modules.gh_update_qt', 'modules.gh_update_help', 'modules.mod_cleanup',
+                   'app_icon', 'app_icon_qt', 'PySide6.QtSvg'],
     hookspath=[],
     runtime_hooks=[],
     excludes=['PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngine',
