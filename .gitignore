@@ -1,5 +1,10 @@
 config.json
 *.log
+*.log.*
+# надёжная запись JSON (safe_json): прежняя копия, временный файл, копия испорченного
+*.bak
+*.tmp
+*.bad-*
 selftest.txt
 __pycache__/
 build/

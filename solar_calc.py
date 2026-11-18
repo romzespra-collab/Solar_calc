@@ -1,4 +1,4 @@
-"""solar_calc.py  v1.12.0
+"""solar_calc.py  v1.13.0
 Солнечный калькулятор — точка входа: авто-установка библиотек, запуск окна, --selftest.
 Расчёт: солнце → угол/азимут → панели → схема Ns×Np → провод и контакты → MPPT (встроенный в инвертор
 или отдельный) → ток заряда → АКБ → инвертор. Данные солнца: встроенные (≈Киев) или PVGIS.
@@ -15,6 +15,12 @@
   app_icon*.py, app_icon_pack.dat  значок программы (общий модуль app_icon): окно выбора — «🎨 Цвета»
 
 Журнал:
+v1.13.0: общие модули: safe_json 1.1.1 — config.json и профили станции (💾) пишутся атомарно, с .bak;
+        испорченный config.json не затирается (копия config.json.bad-<время>, берётся .bak; было —
+        переименование в config.json.bak); app_log 1.2.1 — журнал solar_calc.log (тот же файл, ротация и формат):
+        пароли и токены скрыты, падения — ещё и в solar_calc_crash.log, сообщения Qt — в файл; для разработки —
+        bump_version.py / release.py / check_leaks.py (release.json), в build_exe.bat — шаг «Проверка утечек».
+        --selftest проверяет safe_json, app_log и версию во всех местах.
 v1.12.0: значок программы: окно выбора (общий модуль app_icon 1.2.0) — «🎨 Цвета» → «Тема» →
         «🎨 Значок программы…»; встроенная база ~370 значков, поиск в интернете, своя картинка; .ico и
         ярлыки. Выбор — в app_icon.json рядом с программой; не выбирали — всё как раньше. --selftest
@@ -48,12 +54,10 @@ v1.11.4: обновление с GitHub: общий модуль gh_update 1.3.3
         после установки не предлагается снова).
 v1.11.3: обновление с GitHub (gh_update 1.2.0): старый код, которого нет в новой версии, стирается;
         резервной папки backup больше нет; настройки не трогает.
-v1.11.2: Обновление: модуль gh_update 1.1.3 — в облаке анимации значок GitHub над надписью; архив
-        докачивается при обрыве.
 Более ранние версии — в истории git.
 """
 APP_NAME = "Солнечный калькулятор"
-VERSION = "1.12.0"
+VERSION = "1.13.0"
 
 import sys
 import os
@@ -135,10 +139,9 @@ def ensure_packages():
 ensure_packages()
 
 import json
-import logging
-import traceback
 
-from modules.mod_base import APP_ROOT, log, _fh
+import app_log
+from modules.mod_base import APP_ROOT, log
 from modules.mod_config import DEFAULT_CONFIG, DEFAULT_SYS
 from modules.mod_sun import SunData
 from modules.mod_model import compute_all
@@ -153,12 +156,11 @@ MODULES = ("modules.mod_base", "modules.mod_panels", "modules.mod_equipment", "m
 
 
 def _excepthook(tp, val, tb):
-    """Необработанная ошибка (в т.ч. в слотах Qt): под pythonw консоли нет — пишем в лог."""
+    """Необработанная ошибка (в т.ч. в слотах Qt): под pythonw консоли нет — пишем в лог: строка — в окно
+    «Журнал» и файл, трассировка — в solar_calc.log и solar_calc_crash.log (app_log)."""
     log.error(f"✗ Ошибка программы: {tp.__name__}: {val}")
     try:
-        if _fh is not None:
-            _fh.emit(logging.makeLogRecord({"msg": "".join(traceback.format_exception(tp, val, tb)).rstrip(),
-                                            "levelno": logging.ERROR, "levelname": "ERROR"}))
+        app_log.log_exception(tp, val, tb)
     except Exception:
         pass
 
@@ -221,6 +223,14 @@ def selftest():
     except Exception as e:
         ok = False
         lines.append(f"Значок программы (app_icon): ОШИБКА {e}")
+    for name, fn in (("Надёжная запись настроек (safe_json {})", _selftest_safe_json),
+                     ("Журнал программы (app_log {})", _selftest_app_log),
+                     ("Версия во всех местах (release.json) {}", _selftest_release)):
+        try:
+            lines.append(name.format(fn()) + ": OK")
+        except Exception as e:
+            ok = False
+            lines.append(name.format("").replace(" )", ")").rstrip() + f": ОШИБКА {e}")
     lines.append("ИТОГ: " + ("OK" if ok else "ОШИБКА"))
     txt = "\n".join(lines)
     print(txt)
@@ -250,6 +260,38 @@ def _selftest_icon():
         dlg.exec()
     app.processEvents()
     return f"Значок программы (app_icon {app_icon.VERSION}): OK"
+
+
+def _selftest_safe_json():
+    """Общий модуль safe_json: атомарная запись, .bak, битый файл не затирается."""
+    import safe_json
+    errs = safe_json.selftest()
+    if errs:
+        raise RuntimeError("; ".join(errs[:3]))
+    return safe_json.VERSION
+
+
+def _selftest_app_log():
+    """Общий модуль app_log: ротация, скрытие паролей и токенов, след падения."""
+    errs = app_log.selftest()
+    if errs:
+        raise RuntimeError("; ".join(errs[:3]))
+    return app_log.VERSION
+
+
+def _selftest_release():
+    """release.json: версия во всех местах одна (утилиты bump_version / release / check_leaks). В EXE — пропуск."""
+    if getattr(sys, "frozen", False) or not (APP_ROOT / "release.json").exists():
+        return "(пропуск)"
+    rel = importlib.import_module("release")
+    importlib.import_module("bump_version")
+    importlib.import_module("check_leaks")
+    cfg = rel.load_config(str(APP_ROOT / "release.json"))
+    for p in cfg["programs"]:
+        cur, bad = rel.check_versions(p, str(APP_ROOT))
+        if bad or cur != VERSION:
+            raise RuntimeError(f"{cur}: " + "; ".join(f"{f}: {t}" for f, t in bad))
+    return VERSION
 
 
 def own_modules():

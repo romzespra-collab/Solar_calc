@@ -1,7 +1,10 @@
-"""mod_base.py  v1.9.7
+"""mod_base.py  v1.13.0
 пути (APP_ROOT), календарь, лог (очередь для интерфейса + файл), фоновый Worker
 
 Журнал:
+v1.13.0: файл лога — через общий модуль app_log: тот же solar_calc.log (500 КБ × 1, тот же формат), пароли и
+        токены скрыты (и в окне «Журнал»), падения — ещё и в solar_calc_crash.log, сообщения Qt — в файл. След
+        падения (трассировка) в окно «Журнал» не идёт — там строка от _excepthook, как раньше.
 v1.9.7: папка только для чтения (лог не открыть) — программа запускается (_fh = None); Worker: та же задача,
         поданная во время работы, выполняется после неё с новыми данными (раньше терялась); ошибки задач — с
         трассировкой в файле лога.
@@ -11,12 +14,13 @@ v1.3.0: вынесено из solar_calc.pyw v1.2.1 (программа была
 """
 
 import logging
-import logging.handlers
 import queue
 import sys
 import threading
 import time
 from pathlib import Path
+
+import app_log
 
 
 APP_ROOT = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent
@@ -61,9 +65,15 @@ UIQ = queue.Queue()
 
 
 class _QueueHandler(logging.Handler):
+    """Записи журнала программы → окно «Журнал». След необработанной ошибки (CRITICAL, с трассировкой) — только
+    в файл (в окне — строка от _excepthook, как раньше); сообщения Qt app_log и так пишет только в файл."""
+
     def emit(self, record):
+        if record.levelno >= logging.CRITICAL:
+            return
         try:
-            UIQ.put(("log", record.levelno, time.strftime("%H:%M:%S") + "  " + record.getMessage()))
+            UIQ.put(("log", record.levelno,
+                     time.strftime("%H:%M:%S") + "  " + app_log.mask_secrets(record.getMessage())))
         except Exception:
             pass
 
@@ -77,13 +87,10 @@ log.setLevel(logging.INFO)
 log.addHandler(_QueueHandler())
 
 
-_fh = None                               # файл лога (нет прав на папку — без него)
-try:
-    _fh = logging.handlers.RotatingFileHandler(LOG_PATH, maxBytes=512_000, backupCount=1, encoding="utf-8")
-    _fh.setFormatter(logging.Formatter("%(asctime)s  %(message)s", "%Y-%m-%d %H:%M:%S"))
-    log.addHandler(_fh)
-except Exception:
-    pass
+# файл лога solar_calc.log (общий модуль app_log): ротация 500 КБ × 1, пароли и токены скрыты, падения — ещё и в
+# solar_calc_crash.log, сообщения Qt — в файл; нет прав на папку — программа всё равно запускается
+app_log.setup("solar_calc", LOG_PATH.parent, file_name=LOG_PATH.name, max_bytes=512_000, backups=1,
+              fmt="%(asctime)s  %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
 
 class Worker(threading.Thread):

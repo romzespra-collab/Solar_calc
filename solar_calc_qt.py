@@ -1,7 +1,9 @@
-"""solar_calc_qt.py  v1.12.0
+"""solar_calc_qt.py  v1.13.0
 Главное окно программы (PySide6): боковая панель, страницы, лог, статус.
 
 Журнал:
+v1.13.0: профиль станции (💾) пишется через общий модуль safe_json: атомарно, прежний — <файл>.bak; не записался —
+        сообщение с причиной, как раньше.
 v1.12.0: значок программы — общий модуль app_icon 1.2.0: make_icons(), show_icon_dialog()
          (кнопка «🎨 Значок программы…» — на странице «🎨 Цвета», карточка «Тема»).
 v1.11.10: без изменений окна — версия вместе с программой (уборка modules/ — в solar_calc.py)
@@ -32,6 +34,8 @@ import logging
 import queue
 import time
 from pathlib import Path
+
+import safe_json
 
 from PySide6.QtCore import Qt, QTimer, QByteArray
 from PySide6.QtGui import QGuiApplication
@@ -540,8 +544,10 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWind
         fn = ask_save(self, "Сохранить профиль", str(Path(self._dir()) / "моя_станция.json"), "Профиль (*.json)")
         if not fn:
             return
-        try:
-            Path(fn).write_text(json.dumps({"solar_calc": app_version(), "sys": self.s}, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:                                   # атомарно (safe_json), прежний файл — в <файл>.bak
+            text = json.dumps({"solar_calc": app_version(), "sys": self.s}, ensure_ascii=False, indent=2)
+            if not safe_json.save_text(fn, text):
+                raise OSError(safe_json.last_error(fn) or "файл не записан")
         except OSError as e:
             _save_failed(self, fn, e)
             return
