@@ -15,9 +15,9 @@
   app_icon*.py, app_icon_pack.dat  значок программы (общий модуль app_icon): окно выбора — «🎨 Цвета»
 
 Журнал:
-v1.13.0: общие модули: safe_json 1.0.0 — config.json и профили станции (💾) пишутся атомарно, с .bak;
+v1.13.0: общие модули: safe_json 1.1.0 — config.json и профили станции (💾) пишутся атомарно, с .bak;
         испорченный config.json не затирается (копия config.json.bad-<время>, берётся .bak; было —
-        переименование в config.json.bak); app_log 1.1.0 — журнал solar_calc.log (тот же файл, ротация и формат):
+        переименование в config.json.bak); app_log 1.2.0 — журнал solar_calc.log (тот же файл, ротация и формат):
         пароли и токены скрыты, падения — ещё и в solar_calc_crash.log, сообщения Qt — в файл; для разработки —
         bump_version.py / release.py / check_leaks.py (release.json), в build_exe.bat — шаг «Проверка утечек».
         --selftest проверяет safe_json, app_log и версию во всех местах.

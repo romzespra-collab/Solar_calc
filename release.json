@@ -12,7 +12,8 @@
       ],
       "headers": true,
       "headers_skip": ["build_exe.bat"],
-      "changelog": {"file": "solar_calc.py", "after": "re:^Журнал:$", "template": "v{v}: {msg}\n"},
+      "changelog": {"file": "solar_calc.py", "after": "re:^Журнал:$", "template": "v{v}: {msg}\n",
+                    "wrap": 112, "keep": 10, "entry": "re:^v\\d+\\.\\d+\\.\\d+:", "tail": "Более ранние версии"},
       "allow_in_zip": []
     }
   ]
