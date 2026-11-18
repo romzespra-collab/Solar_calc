@@ -3,7 +3,7 @@
 
 Журнал:
 v1.14.0: числовые поля (_Spin: Stepper, цены зелёного тарифа) — общий модуль int_field (DoubleEdit, SmartMon
-        5.16.107) вместо QDoubleSpinBox; колесо — только в фокусе, ширина, выравнивание, тихий setValue под
+        5.19.0) вместо QDoubleSpinBox; колесо — только в фокусе, ширина, выравнивание, тихий setValue под
         blockSignals — прежние; value() берёт набранное без Enter.
 v1.10.0: Chart — ось лет (xfmt="year"), горизонтальные пунктиры hlines (напр. «вложения» на графике выгоды).
 v1.9.7: _btn вызывает слот без аргумента checked (он попадал в lambda x=… и ломал «🗑 Убрать»); Toggle рисует
@@ -122,7 +122,7 @@ class _Spin(DoubleEdit):
         self.updateGeometry()                      # пределы / суффикс / шрифт — новая подсказка размера
 
     def _show(self):
-        # int_field 5.16.107 после setText снимает blockSignals вызывающего — Stepper.setValue / reconfigure
+        # int_field до 5.19.0 после setText снимал blockSignals вызывающего (в 5.19.0 исправлено) — Stepper.setValue / reconfigure
         # и цены ставят значения «тихо» (blockSignals); прежнее состояние сохраняется
         t = self.textFromValue(self._val)
         if self.text() != t:

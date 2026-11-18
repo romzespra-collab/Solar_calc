@@ -129,8 +129,8 @@ Solar_calc, Contents: Read-only) — кнопка «?» рядом с полем
 | `modules/gh_update*.py` | обновление с GitHub (общий модуль) |
 | `safe_json.py` | надёжная запись `config.json` и профилей станции: атомарно, `.bak`, битый файл не затирается (общий модуль) |
 | `app_log.py` | журнал `solar_calc.log`: ротация, пароли и токены скрыты, падения — в `solar_calc_crash.log` (общий модуль) |
-| `qt_base.py` | основа окна (общий модуль qt_base 1.0.0): стиль Fusion, тема (QSS на приложение), свой значок на панели задач Windows |
-| `int_field.py` | числовое поле (общий модуль из SmartMon 5.16.107): поля с кнопками [−][+] — без QDoubleSpinBox, колесо (в фокусе) и ↑/↓ меняют число, набранное берётся и без Enter |
+| `qt_base.py` | основа окна (общий модуль qt_base 1.1.0): стиль Fusion, тема (QSS на приложение), свой значок на панели задач Windows |
+| `int_field.py` | числовое поле (общий модуль из SmartMon 5.19.0): поля с кнопками [−][+] — без QDoubleSpinBox, колесо (в фокусе) и ↑/↓ меняют число, набранное берётся и без Enter |
 | `bump_version.py`, `release.py`, `check_leaks.py`, `release.json` | для разработки: версия во всех местах, архив в `release/`, поиск утечек (общие утилиты, в EXE не входят) |
 | `app_icon.py`, `app_icon_qt.py`, `app_icon_pack.dat` | значок программы (общий модуль app_icon 1.2.0): рисунки, .ico, ярлыки, окно выбора, встроенная база значков (Material Design Icons — Apache 2.0, Simple Icons — CC0) |
 | `test_gh_update.pyw` | тесты модуля обновления (без сети) |
