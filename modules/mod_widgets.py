@@ -1,7 +1,10 @@
-"""mod_widgets.py  v1.10.0
+"""mod_widgets.py  v1.14.0
 виджеты Qt: Toggle, Segmented, Stepper, график Chart, таблицы с меню
 
 Журнал:
+v1.14.0: числовые поля (_Spin: Stepper, цены зелёного тарифа) — общий модуль int_field (DoubleEdit, SmartMon
+        5.19.0) вместо QDoubleSpinBox; колесо — только в фокусе, ширина, выравнивание, тихий setValue под
+        blockSignals — прежние; value() берёт набранное без Enter.
 v1.10.0: Chart — ось лет (xfmt="year"), горизонтальные пунктиры hlines (напр. «вложения» на графике выгоды).
 v1.9.7: _btn вызывает слот без аргумента checked (он попадал в lambda x=… и ломал «🗑 Убрать»); Toggle рисует
         ручку своим цветом; убрана пустая _menu_style.
@@ -21,9 +24,12 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF, QSize, QCoreApplication
 from PySide6.QtGui import QPainter, QColor, QPen, QFont, QFontMetrics, QGuiApplication, QPainterPath
 from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QToolButton, QButtonGroup, QHBoxLayout,
-                               QVBoxLayout, QDoubleSpinBox, QComboBox, QAbstractButton, QTableWidget,
+                               QVBoxLayout, QComboBox, QAbstractButton, QTableWidget,
                                QTableWidgetItem, QHeaderView, QAbstractItemView, QMenu, QMessageBox,
-                               QFileDialog, QSizePolicy, QDialog, QLineEdit, QListWidget, QListWidgetItem)
+                               QFileDialog, QSizePolicy, QDialog, QLineEdit, QListWidget, QListWidgetItem,
+                               QAbstractSpinBox, QStyle, QStyleOptionSpinBox)
+
+from int_field import DoubleEdit
 
 from .mod_base import APP_ROOT, log
 from .mod_model import fmt_t
@@ -99,7 +105,50 @@ class Segmented(QWidget):
             b.setChecked(True)
 
 
-class _Spin(QDoubleSpinBox):
+class _Spin(DoubleEdit):
+    """Дробное поле (общий модуль int_field.DoubleEdit вместо QDoubleSpinBox), вид — как был у QDoubleSpinBox:
+    число по локали («4,32 грн»), высота и ширина подсказки — по стилю (CT_SpinBox), ширина — как задана
+    (setMinimumWidth / setFixedWidth). Колесо — только когда поле в фокусе
+    (прокрутка страницы не меняет число)."""
+
+    def _fmt(self, v):
+        loc = self.locale()
+        return loc.toString(float(v), "f", self._dec).replace(loc.groupSeparator(), "")
+
+    def cleanText(self):
+        return super().cleanText().replace("\u00a0", "").replace("\u2212", "-")
+
+    def _fit(self):
+        self.updateGeometry()                      # пределы / суффикс / шрифт — новая подсказка размера
+
+    def _show(self):
+        # int_field до 5.19.0 после setText снимал blockSignals вызывающего (в 5.19.0 исправлено) — Stepper.setValue / reconfigure
+        # и цены ставят значения «тихо» (blockSignals); прежнее состояние сохраняется
+        t = self.textFromValue(self._val)
+        if self.text() != t:
+            old = self.blockSignals(True)
+            self.setText(t)
+            self.blockSignals(old)
+
+    def _hint(self, suffix):
+        """Подсказка размера, как у QAbstractSpinBox: самое длинное значение (+ суффикс) по стилю CT_SpinBox."""
+        fm = self.fontMetrics()
+        tail = self._prefix + (self._suffix if suffix else "") + " "
+        w = max(fm.horizontalAdvance(self._fmt(v)[:18] + tail) for v in (self._min, self._max))
+        if self._special:
+            w = max(w, fm.horizontalAdvance(self._special))
+        opt = QStyleOptionSpinBox()
+        opt.initFrom(self)
+        opt.frame = True
+        opt.buttonSymbols = QAbstractSpinBox.UpDownArrows
+        return self.style().sizeFromContents(QStyle.CT_SpinBox, opt, QSize(w + 2, max(fm.height(), 14) + 2), self)
+
+    def sizeHint(self):
+        return self._hint(True)
+
+    def minimumSizeHint(self):
+        return self._hint(False)
+
     def wheelEvent(self, e):
         if self.hasFocus():
             super().wheelEvent(e)
@@ -424,7 +473,6 @@ class Stepper(QWidget):
         self.sp.setDecimals(dec)
         if suffix:
             self.sp.setSuffix(" " + suffix)
-        # не NoButtons: в Qt 6.12 с QSS поле ввода тогда сжимается до 1 px; свои кнопки скрыты в QSS
         self.sp.setFocusPolicy(Qt.StrongFocus)
         self.sp.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.sp.setKeyboardTracking(False)

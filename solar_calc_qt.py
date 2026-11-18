@@ -1,7 +1,8 @@
-"""solar_calc_qt.py  v1.13.0
+"""solar_calc_qt.py  v1.14.0
 Главное окно программы (PySide6): боковая панель, страницы, лог, статус.
 
 Журнал:
+v1.14.0: тема — QSS на приложение общим модулем qt_base 1.1.0 (apply_theme).
 v1.13.0: профиль станции (💾) пишется через общий модуль safe_json: атомарно, прежний — <файл>.bak; не записался —
         сообщение с причиной, как раньше.
 v1.12.0: значок программы — общий модуль app_icon 1.2.0: make_icons(), show_icon_dialog()
@@ -35,6 +36,7 @@ import queue
 import time
 from pathlib import Path
 
+import qt_base
 import safe_json
 
 from PySide6.QtCore import Qt, QTimer, QByteArray
@@ -394,8 +396,7 @@ class App(SettingsPage, ResultsPages, ToolPages, SkyPages, GreenPages, QMainWind
 
     def _apply_theme(self):
         p = self._p()
-        app = QApplication.instance()
-        app.setStyleSheet(_qss(p))
+        qt_base.apply_theme(QApplication.instance(), qss=_qss(p))
         off = "#454b59" if self.cfg.get("theme", "dark") == "dark" else "#c3c8d2"
         for t in self.toggles:
             t.set_theme(p["accent"], off, "#ffffff")        # ручка — белая в обеих темах

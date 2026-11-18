@@ -1,4 +1,4 @@
-"""solar_calc.py  v1.13.0
+"""solar_calc.py  v1.14.0
 Солнечный калькулятор — точка входа: авто-установка библиотек, запуск окна, --selftest.
 Расчёт: солнце → угол/азимут → панели → схема Ns×Np → провод и контакты → MPPT (встроенный в инвертор
 или отдельный) → ток заряда → АКБ → инвертор. Данные солнца: встроенные (≈Киев) или PVGIS.
@@ -13,8 +13,16 @@
   modules/mod_green.py  зелёный тариф (Украина): смета, ОСР, взаимозачёт, окупаемость; страница — mod_page_green
   modules/gh_update*.py обновление с GitHub (общий модуль gh_update): страница «🔄 Обновление»
   app_icon*.py, app_icon_pack.dat  значок программы (общий модуль app_icon): окно выбора — «🎨 Цвета»
+  qt_base.py, int_field.py  общие модули: основа окна (Fusion, тема, значок на панели задач), числовое поле
 
 Журнал:
+v1.14.0: Общие модули: qt_base 1.1.0 — стиль Fusion, тема (QSS на приложение) и свой значок на панели задач
+         (AppUserModelID «solar_calc», тот же) через него; int_field (SmartMon 5.19.0) — числовые поля с
+         кнопками [−][+] (Stepper) и цены зелёного тарифа теперь на DoubleEdit вместо QDoubleSpinBox: набранное
+         число берётся и без Enter (сразу «💾» / пересчёт), колесо — только в фокусе, как было; число по-прежнему
+         с запятой («4,32 грн»), размер поля тот же. Вид прежний (снимки до / после совпадают, кроме места
+         текста в числовых полях — на 7 px левее, как в остальных полях ввода). --selftest проверяет qt_base и
+         int_field.
 v1.13.0: общие модули: safe_json 1.1.1 — config.json и профили станции (💾) пишутся атомарно, с .bak;
         испорченный config.json не затирается (копия config.json.bad-<время>, берётся .bak; было —
         переименование в config.json.bak); app_log 1.2.1 — журнал solar_calc.log (тот же файл, ротация и формат):
@@ -52,12 +60,10 @@ v1.11.5: обновление — только Python: убрано обновл
 v1.11.4: обновление с GitHub: общий модуль gh_update 1.3.3 (обрыв ответа GitHub — понятная ошибка,
         при сбое замены не остаётся *.upd, свои файлы пользователя не стираются, та же версия
         после установки не предлагается снова).
-v1.11.3: обновление с GitHub (gh_update 1.2.0): старый код, которого нет в новой версии, стирается;
-        резервной папки backup больше нет; настройки не трогает.
 Более ранние версии — в истории git.
 """
 APP_NAME = "Солнечный калькулятор"
-VERSION = "1.13.0"
+VERSION = "1.14.0"
 
 import sys
 import os
@@ -225,6 +231,8 @@ def selftest():
         lines.append(f"Значок программы (app_icon): ОШИБКА {e}")
     for name, fn in (("Надёжная запись настроек (safe_json {})", _selftest_safe_json),
                      ("Журнал программы (app_log {})", _selftest_app_log),
+                     ("Основа окна: тема, палитра, полоса диалогов (qt_base {})", _selftest_qt_base),
+                     ("Числовое поле (int_field {})", _selftest_int_field),
                      ("Версия во всех местах (release.json) {}", _selftest_release)):
         try:
             lines.append(name.format(fn()) + ": OK")
@@ -277,6 +285,50 @@ def _selftest_app_log():
     if errs:
         raise RuntimeError("; ".join(errs[:3]))
     return app_log.VERSION
+
+
+def _qapp():
+    """QApplication для проверок окна (без экрана)."""
+    if os.name != "nt":
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    return QApplication.instance() or QApplication(sys.argv[:1])
+
+
+def _selftest_qt_base():
+    """Общий модуль qt_base: палитра, полоса заголовка диалогов (поддельный DWM), «OK» → «ОК»."""
+    _qapp()
+    import qt_base
+    errs = qt_base.selftest()
+    if errs:
+        raise RuntimeError("; ".join(errs[:3]))
+    return qt_base.VERSION
+
+
+def _selftest_int_field():
+    """Общий модуль int_field и поле программы (Stepper): шаг, пределы, число по локали, набранное без Enter,
+    кривой ввод — откат, тихий setValue (blockSignals)."""
+    _qapp()
+    import int_field
+    from PySide6.QtCore import QLocale
+    from modules.mod_widgets import Stepper
+    st = Stepper(0, 50, 0.01, 2, "грн")
+    st.sp.setLocale(QLocale(QLocale.Russian, QLocale.Ukraine))
+    got = []
+    st.changed.connect(got.append)
+    st.setValue(4.32)
+    res = [st.sp.text(), list(got)]
+    st.sp.stepBy(1)
+    res.append(st.value())
+    st.sp.setText("7,5 грн")
+    res.append(st.value())
+    st.sp.setText("абв")
+    st.sp.interpretText()
+    res.append((st.value(), st.sp.text()))
+    want = ["4,32 грн", [], 4.33, 7.5, (7.5, "7,50 грн")]
+    if res != want:
+        raise RuntimeError(f"{res} (ждали {want})")
+    return (int_field.__doc__ or "").split("\n", 1)[0].split()[-1].lstrip("v")
 
 
 def _selftest_release():
@@ -336,12 +388,8 @@ def main():
     if "--selftest" in sys.argv:
         sys.exit(selftest())
     sys.excepthook = _excepthook
-    if os.name == "nt":
-        try:
-            import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("solar_calc")
-        except Exception:
-            pass
+    import qt_base
+    qt_base.set_app_id("solar_calc")             # до QApplication — свой значок на панели задач
     from PySide6.QtCore import QTranslator, QLibraryInfo, QLocale
     from PySide6.QtWidgets import QApplication
     app = QApplication(sys.argv)
@@ -355,7 +403,7 @@ def main():
         mod_cleanup.sweep_modules(str(APP_ROOT), own_modules(), log=log.info)
     except Exception as e:
         log.warning(f"⚠ уборка modules/: {e}")
-    app.setStyle("Fusion")
+    qt_base.setup_app(app, qt_dialogs=False)     # Fusion; окна файлов — где надо, Qt (DontUseNativeDialog)
     QLocale.setDefault(QLocale(QLocale.Russian, QLocale.Ukraine))
     tr = QTranslator(app)
     if tr.load(QLocale(QLocale.Russian), "qtbase", "_", QLibraryInfo.path(QLibraryInfo.TranslationsPath)):

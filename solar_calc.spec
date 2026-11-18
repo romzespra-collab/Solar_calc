@@ -1,4 +1,5 @@
-# solar_calc.spec  v1.13.0 — PyInstaller, onefile, без консоли
+# solar_calc.spec  v1.14.0 — PyInstaller, onefile, без консоли
+# v1.14.0: + qt_base, int_field (общие модули: основа окна, числовое поле)
 # v1.13.0: + safe_json, app_log (общие модули: надёжный config.json, журнал); утилиты bump_version / release /
 #          check_leaks в EXE не входят
 # v1.12.0: + app_icon, app_icon_qt, PySide6.QtSvg (значок программы), база значков app_icon_pack.dat
@@ -29,7 +30,8 @@ a = Analysis(
                    'modules.mod_astro', 'modules.mod_stars', 'modules.mod_weather', 'modules.mod_forecast',
                    'modules.mod_wx_draw', 'modules.mod_sky', 'modules.mod_page_sky', 'modules.mod_constructor', 'modules.mod_region',
                    'modules.gh_update', 'modules.gh_update_qt', 'modules.gh_update_help', 'modules.mod_cleanup',
-                   'app_icon', 'app_icon_qt', 'PySide6.QtSvg', 'safe_json', 'app_log'],
+                   'app_icon', 'app_icon_qt', 'PySide6.QtSvg', 'safe_json', 'app_log',
+                   'qt_base', 'int_field'],
     hookspath=[],
     runtime_hooks=[],
     excludes=['PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngine',

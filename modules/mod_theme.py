@@ -1,7 +1,9 @@
-"""mod_theme.py  v1.11.0
+"""mod_theme.py  v1.14.0
 палитры тёмной/светлой темы и QSS для всех окон и диалогов
 
 Журнал:
+v1.14.0: числовые поля (int_field, QLineEdit#intField) в боковой панели конструктора подсвечиваются при наведении,
+         как прежние QDoubleSpinBox.
 v1.11.0: страница «🔄 Обновление» — рамки групп (QGroupBox) в цветах темы, кнопка «⬆ X.Y.Z» в строке состояния;
          у полей ввода цвет текста задан явно.
 v1.10.0: вкладки (QTabWidget/QTabBar — подчёркивание цветом акцента), галочки в списках и таблицах (видны в
@@ -119,7 +121,8 @@ QFrame#sidePanel QStackedWidget, QFrame#sidePanel QStackedWidget > QWidget, QFra
 QFrame#sidePanel QScrollArea > QWidget > QWidget {{ background: {p['bg']}; }}
 QFrame#sidePanel QComboBox, QFrame#sidePanel QLineEdit, QFrame#sidePanel QAbstractSpinBox,
 QFrame#sidePanel QPushButton {{ background: {inp}; border: 1px solid {inp_line}; }}
-QFrame#sidePanel QComboBox:hover, QFrame#sidePanel QAbstractSpinBox:hover, QFrame#sidePanel QPushButton:hover {{ border-color: {p['accent']}; }}
+QFrame#sidePanel QComboBox:hover, QFrame#sidePanel QAbstractSpinBox:hover, QFrame#sidePanel QLineEdit#intField:hover,
+QFrame#sidePanel QPushButton:hover {{ border-color: {p['accent']}; }}
 QFrame#sidePanel QPushButton#seg:checked {{ background: {p['accent']}; color: #ffffff; border-color: {p['accent']}; }}
 QLabel#sideTitle {{ color: {p['muted']}; font-size: 9pt; font-weight: 600; text-transform: uppercase; }}
 QLabel#sideBig {{ font-size: 13pt; font-weight: 700; }}

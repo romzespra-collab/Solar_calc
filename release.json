@@ -11,7 +11,7 @@
         ["solar_calc.spec", "solar_calc.spec  v{v}"]
       ],
       "headers": true,
-      "headers_skip": ["build_exe.bat"],
+      "headers_skip": ["build_exe.bat", "qt_base.py"],
       "changelog": {"file": "solar_calc.py", "after": "re:^Журнал:$", "template": "v{v}: {msg}\n",
                     "wrap": 112, "keep": 10, "entry": "re:^v\\d+\\.\\d+\\.\\d+:", "tail": "Более ранние версии"},
       "allow_in_zip": []
